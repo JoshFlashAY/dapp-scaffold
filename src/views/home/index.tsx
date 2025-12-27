@@ -77,6 +77,7 @@ const GameSandbox: FC = () => {
   const [touchActive, setTouchActive] = useState(false);
   const [level, setLevel] = useState<'Easy' | 'Medium' | 'Fast'>('Easy');
   const [currentTileOrder, setCurrentTileOrder] = useState(1);
+  const [musicPlaying, setMusicPlaying] = useState(false);
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -86,54 +87,119 @@ const GameSandbox: FC = () => {
   const startTimeRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioNodesRef = useRef<Set<AudioNode>>(new Set());
+  const backgroundMusicRef = useRef<OscillatorNode | null>(null);
+  const gameContainerRef = useRef<HTMLDivElement>(null);
+  const mobileSwipeStartRef = useRef<number | null>(null);
 
   // Initialize audio context
   const initAudio = () => {
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
+    return audioContextRef.current;
+  };
+
+  // Start background music
+  const startBackgroundMusic = () => {
+    if (!musicPlaying) {
+      const ctx = initAudio();
+      
+      try {
+        // Create oscillator for background music
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        // Simple melody pattern
+        let currentNote = 0;
+        const melody = [440, 493.88, 523.25, 587.33, 659.25, 587.33, 523.25, 493.88]; // A, B, C, D, E, D, C, B
+        
+        oscillator.type = 'sine';
+        gainNode.gain.value = 0.1; // Lower volume for background
+        
+        backgroundMusicRef.current = oscillator;
+        
+        // Schedule note changes
+        const playMelody = () => {
+          if (musicPlaying && backgroundMusicRef.current) {
+            oscillator.frequency.setValueAtTime(melody[currentNote], ctx.currentTime);
+            currentNote = (currentNote + 1) % melody.length;
+          }
+        };
+        
+        oscillator.start();
+        
+        // Change note every 0.5 seconds
+        const melodyInterval = setInterval(playMelody, 500);
+        
+        setMusicPlaying(true);
+        
+        return () => {
+          clearInterval(melodyInterval);
+          oscillator.stop();
+        };
+      } catch (error) {
+        console.log("Background music error:", error);
+      }
+    }
+  };
+
+  // Stop background music
+  const stopBackgroundMusic = () => {
+    if (backgroundMusicRef.current) {
+      try {
+        backgroundMusicRef.current.stop();
+        backgroundMusicRef.current = null;
+      } catch (e) {}
+    }
+    setMusicPlaying(false);
   };
 
   // Play sound for tile tap
-  const playTileSound = (frequency: number, type: 'hit' | 'perfect' | 'miss') => {
-    if (!audioContextRef.current) initAudio();
-    if (!audioContextRef.current) return;
-
+  const playTileSound = (frequency: number, type: 'hit' | 'perfect' | 'miss' | 'background') => {
+    const ctx = initAudio();
+    
     try {
-      const oscillator = audioContextRef.current.createOscillator();
-      const gainNode = audioContextRef.current.createGain();
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
       
       oscillator.connect(gainNode);
-      gainNode.connect(audioContextRef.current.destination);
+      gainNode.connect(ctx.destination);
       
       oscillator.frequency.value = frequency;
       
-      // Different oscillator types for different sounds
       switch(type) {
         case 'perfect':
-          oscillator.type = 'sine';
-          gainNode.gain.setValueAtTime(0.4, audioContextRef.current.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContextRef.current.currentTime + 0.3);
+          oscillator.type = 'triangle';
+          gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
           oscillator.start();
-          oscillator.stop(audioContextRef.current.currentTime + 0.3);
+          oscillator.stop(ctx.currentTime + 0.3);
           break;
         case 'hit':
-          oscillator.type = 'triangle';
-          gainNode.gain.setValueAtTime(0.3, audioContextRef.current.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContextRef.current.currentTime + 0.2);
+          oscillator.type = 'sine';
+          gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
           oscillator.start();
-          oscillator.stop(audioContextRef.current.currentTime + 0.2);
+          oscillator.stop(ctx.currentTime + 0.2);
           break;
         case 'miss':
           oscillator.type = 'sawtooth';
-          gainNode.gain.setValueAtTime(0.5, audioContextRef.current.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContextRef.current.currentTime + 0.4);
+          gainNode.gain.setValueAtTime(0.4, ctx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
           oscillator.start();
-          oscillator.stop(audioContextRef.current.currentTime + 0.4);
+          oscillator.stop(ctx.currentTime + 0.4);
+          break;
+        case 'background':
+          oscillator.type = 'sine';
+          gainNode.gain.setValueAtTime(0.05, ctx.currentTime);
+          oscillator.start();
+          oscillator.stop(ctx.currentTime + 0.5);
           break;
       }
       
-      // Store reference for cleanup
       audioNodesRef.current.add(oscillator);
       oscillator.onended = () => audioNodesRef.current.delete(oscillator);
     } catch (error) {
@@ -143,6 +209,7 @@ const GameSandbox: FC = () => {
 
   // Clean up audio nodes
   const cleanupAudio = () => {
+    stopBackgroundMusic();
     audioNodesRef.current.forEach(node => {
       try {
         if ('stop' in node) (node as any).stop();
@@ -150,11 +217,6 @@ const GameSandbox: FC = () => {
     });
     audioNodesRef.current.clear();
   };
-
-  // Update ref when score changes
-  useEffect(() => {
-    scoreUpdateRef.current = score;
-  }, [score]);
 
   // Initialize audio on first user interaction
   useEffect(() => {
@@ -174,7 +236,7 @@ const GameSandbox: FC = () => {
     };
   }, []);
 
-  // Track game time and adjust level
+  // Track game time and adjust level (10s for Medium, 20s for Fast)
   useEffect(() => {
     if (!gameActive || !gameStarted) return;
 
@@ -187,15 +249,19 @@ const GameSandbox: FC = () => {
 
       const elapsedSeconds = (currentTime - startTimeRef.current) / 1000;
       
-      if (elapsedSeconds >= 420) { // 7 minutes = 420 seconds
+      if (elapsedSeconds >= 20) { // 20 seconds = Fast
         if (level !== 'Fast') {
           setLevel('Fast');
           setGameSpeed(2.5);
+          // Play level up sound
+          playTileSound(1200, 'perfect');
         }
-      } else if (elapsedSeconds >= 120) { // 2 minutes = 120 seconds
+      } else if (elapsedSeconds >= 10) { // 10 seconds = Medium
         if (level !== 'Medium') {
           setLevel('Medium');
           setGameSpeed(1.8);
+          // Play level up sound
+          playTileSound(1000, 'perfect');
         }
       } else {
         if (level !== 'Easy') {
@@ -205,7 +271,7 @@ const GameSandbox: FC = () => {
       }
     };
 
-    const levelCheckInterval = setInterval(updateLevel, 1000);
+    const levelCheckInterval = setInterval(updateLevel, 100);
 
     return () => {
       clearInterval(levelCheckInterval);
@@ -218,7 +284,7 @@ const GameSandbox: FC = () => {
     return `tile_${tileCounter.current}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   };
 
-  // Generate tiles based on current level
+  // Generate tiles based on current level - FIXED FOR MOBILE
   useEffect(() => {
     if (!gameActive || !gameStarted) return;
     
@@ -236,13 +302,13 @@ const GameSandbox: FC = () => {
         speed: baseSpeed,
         tapped: false,
         order: tileCounter.current,
-        xOffset: (Math.random() * 15 - 7.5), // Slight horizontal variation
+        xOffset: (Math.random() * 10 - 5), // Reduced variation for mobile
       };
       
       setTiles(prev => {
         const newTiles = [...prev, newTile];
-        // Limit total tiles on screen
-        const maxTotalTiles = level === 'Easy' ? 5 : level === 'Medium' ? 8 : 12;
+        // Limit total tiles on screen - adjusted for faster gameplay
+        const maxTotalTiles = level === 'Easy' ? 8 : level === 'Medium' ? 12 : 16;
         if (newTiles.length > maxTotalTiles) {
           return newTiles.slice(-maxTotalTiles);
         }
@@ -255,22 +321,22 @@ const GameSandbox: FC = () => {
       clearInterval(tileIntervalRef.current);
     }
 
-    // Initial tile with delay (easier start)
+    // Initial tile with delay
     setTimeout(() => {
       if (gameActive && gameStarted) generateTile();
-    }, 1000 / gameSpeed);
+    }, 500 / gameSpeed);
 
-    // Set tile generation interval based on level
+    // Set tile generation interval based on level - faster for new timing
     let tileInterval;
     switch (level) {
       case 'Easy':
-        tileInterval = 1800; // 1.8 seconds between tiles
+        tileInterval = 1200; // Faster: 1.2 seconds between tiles
         break;
       case 'Medium':
-        tileInterval = 1000; // 1 second between tiles
+        tileInterval = 700;  // Faster: 0.7 seconds between tiles
         break;
       case 'Fast':
-        tileInterval = 600; // 0.6 seconds between tiles
+        tileInterval = 400;  // Faster: 0.4 seconds between tiles
         break;
       default:
         tileInterval = 1000;
@@ -307,7 +373,7 @@ const GameSandbox: FC = () => {
             // Check if tile reached bottom without being tapped
             if (tile.position > 100 && tile.active && !tile.tapped) {
               // Missed a tile - game over
-              playTileSound(150, 'miss'); // Low sound for miss
+              playTileSound(150, 'miss');
               setTimeout(() => handleGameOver('Missed tile!'), 0);
               return false;
             }
@@ -326,9 +392,48 @@ const GameSandbox: FC = () => {
     };
   }, [gameActive, gameSpeed, gameStarted]);
 
+  // Handle mobile swipe/tap
+  useEffect(() => {
+    const container = gameContainerRef.current;
+    if (!container) return;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      mobileSwipeStartRef.current = e.touches[0].clientX;
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (!gameActive || !gameStarted || !mobileSwipeStartRef.current) return;
+      
+      const touchX = e.changedTouches[0].clientX;
+      const startX = mobileSwipeStartRef.current;
+      const containerRect = container.getBoundingClientRect();
+      const containerWidth = containerRect.width;
+      
+      // Calculate column based on touch position
+      const relativeX = touchX - containerRect.left;
+      const columnWidth = containerWidth / columns;
+      const columnIndex = Math.floor(relativeX / columnWidth);
+      
+      if (columnIndex >= 0 && columnIndex < columns) {
+        handleColumnTap(columnIndex, e as any);
+      }
+      
+      mobileSwipeStartRef.current = null;
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [gameActive, gameStarted, columns]);
+
   const handleGameOver = (reason: string) => {
     if (!gameActive) return;
     
+    stopBackgroundMusic();
     setGameActive(false);
     setShowFeedback({type: 'miss', show: true, text: reason});
     setTimeout(() => setShowFeedback(prev => ({...prev, show: false})), 1500);
@@ -345,7 +450,7 @@ const GameSandbox: FC = () => {
     }
   };
 
-  // Handle column tap
+  // Handle column tap (for both mouse and touch)
   const handleColumnTap = (columnIndex: number, e: React.MouseEvent | React.TouchEvent) => {
     if (!gameActive || !gameStarted) return;
     
@@ -360,7 +465,7 @@ const GameSandbox: FC = () => {
 
     if (!currentTile) {
       // No current tile, but screen was tapped - game over
-      playTileSound(120, 'miss'); // Very low sound for error
+      playTileSound(120, 'miss');
       handleGameOver('No tile to tap!');
       return;
     }
@@ -423,12 +528,15 @@ const GameSandbox: FC = () => {
       ));
     } else {
       // Tapped wrong column - game over
-      playTileSound(100, 'miss'); // Low, unpleasant sound for wrong tap
+      playTileSound(100, 'miss');
       handleGameOver('Wrong column!');
     }
   };
 
   const startGame = () => {
+    // Start background music
+    startBackgroundMusic();
+    
     // Play start sound
     playTileSound(1200, 'perfect');
     
@@ -450,6 +558,9 @@ const GameSandbox: FC = () => {
   };
 
   const restartGame = () => {
+    // Restart background music
+    startBackgroundMusic();
+    
     // Play restart sound
     playTileSound(1000, 'hit');
     
@@ -471,6 +582,9 @@ const GameSandbox: FC = () => {
   };
 
   const exitToMenu = () => {
+    // Stop background music
+    stopBackgroundMusic();
+    
     // Play menu sound
     playTileSound(300, 'hit');
     
@@ -509,10 +623,12 @@ const GameSandbox: FC = () => {
     .sort((a, b) => a.order - b.order)[0];
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-gray-950 to-black p-2">
-      <div className="relative w-full max-w-[240px] h-[426px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden"
-           style={{ aspectRatio: '9/16' }}>
-        
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-gray-950 to-black p-2 overflow-hidden touch-none">
+      <div 
+        ref={gameContainerRef}
+        className="relative w-full max-w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none"
+        style={{ aspectRatio: '9/16' }}
+      >
         {/* App-like glass morphism background */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,119,0,0.05),transparent_50%)]"></div>
         
@@ -526,13 +642,13 @@ const GameSandbox: FC = () => {
                   <div className="text-3xl font-bold bg-gradient-to-r from-orange-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent mb-1">
                     SEQUENCE RHYTHM
                   </div>
-                  <div className="text-sm text-gray-400 font-light">Tap in Order • Anywhere in Column</div>
+                  <div className="text-sm text-gray-400 font-light">Tap in Order • Mobile Friendly</div>
                 </div>
 
                 {/* START GAME BUTTON - RIGHT AFTER SUBTITLE */}
                 <button
                   onClick={startGame}
-                  className="relative w-full bg-gradient-to-r from-orange-500 via-orange-400 to-yellow-500 text-white font-bold text-xl py-4 px-4 rounded-2xl shadow-[0_0_30px_rgba(255,119,0,0.6)] hover:shadow-[0_0_40px_rgba(255,119,0,0.8)] active:scale-[0.98] transition-all duration-200 border-4 border-orange-300 overflow-hidden group animate-pulse mb-6"
+                  className="relative w-full bg-gradient-to-r from-orange-500 via-orange-400 to-yellow-500 text-white font-bold text-xl py-4 px-4 rounded-2xl shadow-[0_0_30px_rgba(255,119,0,0.6)] hover:shadow-[0_0_40px_rgba(255,119,0,0.8)] active:scale-[0.98] transition-all duration-200 border-4 border-orange-300 overflow-hidden group animate-pulse mb-6 touch-auto"
                 >
                   <div className="absolute inset-0 bg-gradient-to-r from-orange-400/0 via-white/20 to-orange-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
                   <span className="relative flex items-center justify-center gap-3">
@@ -543,7 +659,7 @@ const GameSandbox: FC = () => {
                 </button>
                 
                 <div className="text-xs text-orange-400 mb-4 font-light text-center">
-                  👆 Click to start the sequence!
+                  👆 Tap to start! Works on mobile & desktop
                 </div>
               </div>
 
@@ -557,15 +673,15 @@ const GameSandbox: FC = () => {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 bg-gradient-to-br from-orange-400 to-orange-500 rounded border border-orange-400/30 flex items-center justify-center text-xs">↑↓</div>
-                    <span>Click ANYWHERE in the correct column</span>
+                    <span>Tap ANYWHERE in the correct column</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 bg-gray-800 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-500">✗</div>
                     <span>Wrong column or order = Game Over</span>
                   </div>
                   <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-800">
-                    <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-purple-600 rounded border border-purple-400/50 flex items-center justify-center text-xs">♪</div>
-                    <span className="text-purple-300">Each tap plays a unique sound!</span>
+                    <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-purple-600 rounded border border-purple-400/50 flex items-center justify-center text-xs">🎵</div>
+                    <span className="text-purple-300">Background music plays automatically</span>
                   </div>
                 </div>
               </div>
@@ -624,15 +740,18 @@ const GameSandbox: FC = () => {
             </div>
 
             {/* Game columns - Entire column is clickable */}
-            <div className="flex h-full pt-20">
+            <div className="flex h-full pt-20 touch-none">
               {Array.from({ length: columns }).map((_, columnIndex) => (
                 <button
                   key={`column_${columnIndex}`}
-                  className={`flex-1 relative transition-all duration-100 ${
+                  className={`flex-1 relative transition-all duration-100 touch-none ${
                     touchActive && currentTile?.column === columnIndex ? 'bg-orange-500/10' : 'bg-transparent'
-                  } ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} hover:bg-gray-800/10`}
+                  } ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} hover:bg-gray-800/10 active:bg-orange-500/20`}
                   onClick={(e) => handleColumnTap(columnIndex, e)}
-                  onTouchStart={(e) => handleColumnTap(columnIndex, e)}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    handleColumnTap(columnIndex, e);
+                  }}
                 >
                   {/* Column lane guide lines */}
                   <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
@@ -650,11 +769,11 @@ const GameSandbox: FC = () => {
               ))}
             </div>
 
-            {/* Falling orange tiles */}
+            {/* Falling orange tiles - FIXED FOR MOBILE DISPLAY */}
             {tiles.map(tile => (
               <div
                 key={tile.id}
-                className={`absolute w-16 h-16 transition-all duration-100 rounded-lg ${
+                className={`absolute touch-none ${gameContainerRef.current && gameContainerRef.current.clientWidth < 400 ? 'w-12 h-12' : 'w-16 h-16'} transition-all duration-100 rounded-lg ${
                   tile.tapped ? 'opacity-30 scale-90' : 'opacity-100'
                 } ${tile.active && !tile.tapped && currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
                 style={{
@@ -673,7 +792,7 @@ const GameSandbox: FC = () => {
                 } border-2 ${tile.active && !tile.tapped ? 'border-orange-300/60' : 'border-green-400/30'}`}>
                   {/* Order number */}
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className={`text-xl font-bold ${
+                    <div className={`${gameContainerRef.current && gameContainerRef.current.clientWidth < 400 ? 'text-lg' : 'text-xl'} font-bold ${
                       tile.active && !tile.tapped
                         ? currentTile?.id === tile.id ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-white/80'
                         : 'text-green-200'
@@ -695,7 +814,7 @@ const GameSandbox: FC = () => {
                   
                   {/* Tap indicator for early taps */}
                   {tile.active && !tile.tapped && currentTile?.id === tile.id && tile.position < 50 && (
-                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-xs text-orange-300 font-bold whitespace-nowrap">
+                    <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 text-xs text-orange-300 font-bold whitespace-nowrap">
                       Tap Now! +{Math.round((100 - tile.position * 0.8) * multiplier)}pts
                     </div>
                   )}
@@ -705,7 +824,7 @@ const GameSandbox: FC = () => {
 
             {/* Current tile indicator */}
             {currentTile && gameActive && (
-              <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 text-center z-10">
+              <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 text-center z-10 touch-none">
                 <div className="bg-gradient-to-r from-gray-900/80 to-black/80 text-orange-300 text-sm px-4 py-2 rounded-full backdrop-blur-sm border border-orange-500/30">
                   TAP IN: <span className="font-bold text-white">Column {currentTile.column + 1}</span>
                   <div className="text-xs text-orange-400">Tile #{currentTile.order}</div>
@@ -715,7 +834,7 @@ const GameSandbox: FC = () => {
 
             {/* Timing feedback with smooth animation */}
             {showFeedback.show && (
-              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-3xl font-bold z-20 ${
+              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-3xl font-bold z-20 touch-none ${
                 showFeedback.type === 'perfect' 
                   ? 'text-yellow-300 animate-bounce' 
                   : 'text-orange-300 animate-pulse'
@@ -731,14 +850,14 @@ const GameSandbox: FC = () => {
 
             {/* High streak notification */}
             {streak >= 5 && streak % 5 === 0 && (
-              <div className="absolute top-40 left-1/2 transform -translate-x-1/2 text-xl font-bold text-yellow-300 animate-bounce z-10 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 px-4 py-2 rounded-full backdrop-blur-sm">
+              <div className="absolute top-40 left-1/2 transform -translate-x-1/2 text-xl font-bold text-yellow-300 animate-bounce z-10 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 px-4 py-2 rounded-full backdrop-blur-sm touch-none">
                 ✨ {streak} STREAK! ×{multiplier.toFixed(1)}
               </div>
             )}
 
             {/* Game Over Screen with modern design */}
             {!gameActive && gameStarted && (
-              <div className="absolute inset-0 bg-gradient-to-b from-black/95 via-gray-950/95 to-black/95 flex flex-col items-center justify-center z-30 p-4 backdrop-blur-sm">
+              <div className="absolute inset-0 bg-gradient-to-b from-black/95 via-gray-950/95 to-black/95 flex flex-col items-center justify-center z-30 p-4 backdrop-blur-sm touch-auto">
                 <div className="bg-gradient-to-b from-gray-900/90 to-black/90 rounded-2xl p-6 text-center border border-orange-500/30 w-full shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
                   {/* Result emoji */}
                   <div className="text-5xl mb-4">
@@ -785,13 +904,13 @@ const GameSandbox: FC = () => {
                   <div className="flex gap-3">
                     <button
                       onClick={restartGame}
-                      className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-[0_10px_30px_rgba(255,119,0,0.3)] active:scale-95 transition-all duration-200 border border-orange-300/30"
+                      className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-[0_10px_30px_rgba(255,119,0,0.3)] active:scale-95 transition-all duration-200 border border-orange-300/30 touch-auto"
                     >
                       PLAY AGAIN
                     </button>
                     <button
                       onClick={exitToMenu}
-                      className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-[0_10px_30px_rgba(0,0,0,0.3)] active:scale-95 transition-all duration-200 border border-gray-700/50"
+                      className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-[0_10px_30px_rgba(0,0,0,0.3)] active:scale-95 transition-all duration-200 border border-gray-700/50 touch-auto"
                     >
                       MENU
                     </button>
@@ -807,8 +926,8 @@ const GameSandbox: FC = () => {
               </div>
             )}
 
-            {/* Level progress indicator */}
-            <div className="absolute bottom-28 left-0 right-0 text-center z-10">
+            {/* Level progress indicator with time remaining */}
+            <div className="absolute bottom-28 left-0 right-0 text-center z-10 touch-none">
               <div className={`inline-block ${
                 level === 'Easy' ? 'bg-green-500/20 text-green-300' : 
                 level === 'Medium' ? 'bg-yellow-500/20 text-yellow-300' : 
@@ -818,9 +937,19 @@ const GameSandbox: FC = () => {
                 level === 'Medium' ? 'border-yellow-500/30' : 
                 'border-red-500/30'
               }`}>
-                {level === 'Easy' ? '🎵 EASY - Find the sequence' : 
-                 level === 'Medium' ? '⚡ MEDIUM - Quick decisions' : 
-                 '🔥 FAST - Rapid sequence!'}
+                {level === 'Easy' ? '🎵 EASY - Starting level' : 
+                 level === 'Medium' ? '⚡ MEDIUM - Speed increased!' : 
+                 '🔥 FAST - Maximum speed!'}
+              </div>
+            </div>
+
+            {/* Music indicator */}
+            <div className="absolute top-24 right-3 bg-black/30 rounded-full p-2 z-10">
+              <div className="text-xs text-gray-400 flex items-center gap-1">
+                <span className={musicPlaying ? 'text-green-400' : 'text-red-400'}>
+                  {musicPlaying ? '🔊' : '🔈'}
+                </span>
+                <span className="hidden sm:inline">Music</span>
               </div>
             </div>
           </>
@@ -828,10 +957,10 @@ const GameSandbox: FC = () => {
       </div>
 
       {/* Status indicator */}
-      <div className="mt-4 text-center">
+      <div className="mt-4 text-center touch-none">
         {!gameStarted ? (
           <div className="text-xs text-orange-400 font-light tracking-wide">
-            Click START GAME above to begin! 🔊 Sound enabled
+            Tap START GAME above to begin! 🔊 Music enabled
           </div>
         ) : gameActive ? (
           <div className="text-xs text-gray-400 font-light">
