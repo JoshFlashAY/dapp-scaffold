@@ -117,7 +117,7 @@ const GameSandbox: FC = () => {
         const melody = [440, 493.88, 523.25, 587.33, 659.25, 587.33, 523.25, 493.88]; // A, B, C, D, E, D, C, B
         
         oscillator.type = 'sine';
-        gainNode.gain.value = 0.1; // Lower volume for background
+        gainNode.gain.value = 0.08; // Lower volume for background
         
         backgroundMusicRef.current = oscillator;
         
@@ -284,7 +284,7 @@ const GameSandbox: FC = () => {
     return `tile_${tileCounter.current}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   };
 
-  // Generate tiles based on current level - FIXED FOR MOBILE
+  // Generate tiles based on current level
   useEffect(() => {
     if (!gameActive || !gameStarted) return;
     
@@ -302,12 +302,12 @@ const GameSandbox: FC = () => {
         speed: baseSpeed,
         tapped: false,
         order: tileCounter.current,
-        xOffset: (Math.random() * 10 - 5), // Reduced variation for mobile
+        xOffset: (Math.random() * 10 - 5), // Reduced variation
       };
       
       setTiles(prev => {
         const newTiles = [...prev, newTile];
-        // Limit total tiles on screen - adjusted for faster gameplay
+        // Limit total tiles on screen
         const maxTotalTiles = level === 'Easy' ? 8 : level === 'Medium' ? 12 : 16;
         if (newTiles.length > maxTotalTiles) {
           return newTiles.slice(-maxTotalTiles);
@@ -326,17 +326,17 @@ const GameSandbox: FC = () => {
       if (gameActive && gameStarted) generateTile();
     }, 500 / gameSpeed);
 
-    // Set tile generation interval based on level - faster for new timing
+    // Set tile generation interval based on level
     let tileInterval;
     switch (level) {
       case 'Easy':
-        tileInterval = 1200; // Faster: 1.2 seconds between tiles
+        tileInterval = 1200;
         break;
       case 'Medium':
-        tileInterval = 700;  // Faster: 0.7 seconds between tiles
+        tileInterval = 700;
         break;
       case 'Fast':
-        tileInterval = 400;  // Faster: 0.4 seconds between tiles
+        tileInterval = 400;
         break;
       default:
         tileInterval = 1000;
@@ -623,355 +623,334 @@ const GameSandbox: FC = () => {
     .sort((a, b) => a.order - b.order)[0];
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-gray-950 to-black p-2 overflow-hidden touch-none">
-      <div 
-        ref={gameContainerRef}
-        className="relative w-full max-w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none"
-        style={{ aspectRatio: '9/16' }}
-      >
-        {/* App-like glass morphism background */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,119,0,0.05),transparent_50%)]"></div>
-        
-        {/* MENU SCREEN - Shows when gameStarted is false */}
-        {!gameStarted && (
-          <div className="absolute inset-0 bg-gradient-to-b from-black via-gray-950 to-black flex flex-col items-center justify-center z-30 p-6">
-            <div className="text-center w-full h-full flex flex-col justify-between">
-              {/* Top section with title and subtitle */}
-              <div>
-                <div className="mb-4">
-                  <div className="text-3xl font-bold bg-gradient-to-r from-orange-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent mb-1">
-                    SEQUENCE RHYTHM
-                  </div>
-                  <div className="text-sm text-gray-400 font-light">Tap in Order • Mobile Friendly</div>
+    <div 
+      ref={gameContainerRef}
+      className="relative w-full h-full min-h-[480px] max-h-[480px] max-w-[270px] mx-auto bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none"
+      style={{ aspectRatio: '9/16' }}
+    >
+      {/* App-like glass morphism background */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,119,0,0.05),transparent_50%)]"></div>
+      
+      {/* MENU SCREEN - Shows when gameStarted is false */}
+      {!gameStarted && (
+        <div className="absolute inset-0 bg-gradient-to-b from-black via-gray-950 to-black flex flex-col items-center justify-center z-30 p-4">
+          <div className="text-center w-full h-full flex flex-col justify-between">
+            {/* Top section with title and subtitle */}
+            <div>
+              <div className="mb-3">
+                <div className="text-2xl font-bold bg-gradient-to-r from-orange-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent mb-1">
+                  SEQUENCE RHYTHM
                 </div>
-
-                {/* START GAME BUTTON - RIGHT AFTER SUBTITLE */}
-                <button
-                  onClick={startGame}
-                  className="relative w-full bg-gradient-to-r from-orange-500 via-orange-400 to-yellow-500 text-white font-bold text-xl py-4 px-4 rounded-2xl shadow-[0_0_30px_rgba(255,119,0,0.6)] hover:shadow-[0_0_40px_rgba(255,119,0,0.8)] active:scale-[0.98] transition-all duration-200 border-4 border-orange-300 overflow-hidden group animate-pulse mb-6 touch-auto"
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-orange-400/0 via-white/20 to-orange-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-                  <span className="relative flex items-center justify-center gap-3">
-                    <span className="text-xl">▶</span>
-                    <span className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">START GAME</span>
-                  </span>
-                  <div className="absolute inset-0 border-2 border-white/30 rounded-2xl pointer-events-none"></div>
-                </button>
-                
-                <div className="text-xs text-orange-400 mb-4 font-light text-center">
-                  👆 Tap to start! Works on mobile & desktop
-                </div>
+                <div className="text-xs text-gray-400 font-light">Tap in Order • Mobile Friendly</div>
               </div>
 
-              {/* Collapsible instruction section */}
-              <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800 mb-3">
-                <div className="text-sm text-white mb-2 font-medium">🎵 HOW TO PLAY</div>
-                <div className="grid grid-cols-1 gap-2 text-xs text-gray-300">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-gradient-to-br from-orange-500 to-orange-600 rounded border border-orange-400/50 flex items-center justify-center text-xs font-bold">1</div>
-                    <span>Tap tiles in order (1, 2, 3...)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-gradient-to-br from-orange-400 to-orange-500 rounded border border-orange-400/30 flex items-center justify-center text-xs">↑↓</div>
-                    <span>Tap ANYWHERE in the correct column</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-gray-800 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-500">✗</div>
-                    <span>Wrong column or order = Game Over</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-800">
-                    <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-purple-600 rounded border border-purple-400/50 flex items-center justify-center text-xs">🎵</div>
-                    <span className="text-purple-300">Background music plays automatically</span>
-                  </div>
+              {/* START GAME BUTTON */}
+              <button
+                onClick={startGame}
+                className="relative w-full bg-gradient-to-r from-orange-500 via-orange-400 to-yellow-500 text-white font-bold text-lg py-3 px-4 rounded-2xl shadow-[0_0_20px_rgba(255,119,0,0.6)] hover:shadow-[0_0_30px_rgba(255,119,0,0.8)] active:scale-[0.98] transition-all duration-200 border-4 border-orange-300 overflow-hidden group animate-pulse mb-4 touch-auto"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-orange-400/0 via-white/20 to-orange-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+                <span className="relative flex items-center justify-center gap-2">
+                  <span className="text-lg">▶</span>
+                  <span className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">START GAME</span>
+                </span>
+              </button>
+              
+              <div className="text-xs text-orange-400 mb-3 font-light text-center">
+                👆 Tap to start! Works on mobile & desktop
+              </div>
+            </div>
+
+            {/* Instructions */}
+            <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800 mb-3">
+              <div className="text-sm text-white mb-2 font-medium">🎵 HOW TO PLAY</div>
+              <div className="grid grid-cols-1 gap-2 text-xs text-gray-300">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 bg-gradient-to-br from-orange-500 to-orange-600 rounded border border-orange-400/50 flex items-center justify-center text-xs font-bold">1</div>
+                  <span>Tap tiles in order (1, 2, 3...)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 bg-gradient-to-br from-orange-400 to-orange-500 rounded border border-orange-400/30 flex items-center justify-center text-xs">↑↓</div>
+                  <span>Tap ANYWHERE in correct column</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 bg-gray-800 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-500">✗</div>
+                  <span>Wrong column = Game Over</span>
+                </div>
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-800">
+                  <div className="w-5 h-5 bg-gradient-to-br from-purple-500 to-purple-600 rounded border border-purple-400/50 flex items-center justify-center text-xs">🎵</div>
+                  <span className="text-purple-300">Background music plays automatically</span>
                 </div>
               </div>
+            </div>
 
-              {/* High score display - compact */}
-              <div className="bg-gradient-to-r from-gray-900/80 to-black/80 rounded-xl p-3 border border-gray-800">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-xs text-gray-400 font-light">HIGH SCORE</div>
-                    <div className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-yellow-400 bg-clip-text text-transparent">{highScore}</div>
-                  </div>
-                  <div className="text-xs text-gray-500 text-right">
-                    {highScore > 0 ? 'Beat your record!' : 'Be the first!'}
-                  </div>
+            {/* High score display */}
+            <div className="bg-gradient-to-r from-gray-900/80 to-black/80 rounded-xl p-3 border border-gray-800">
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="text-xs text-gray-400 font-light">HIGH SCORE</div>
+                  <div className="text-xl font-bold bg-gradient-to-r from-orange-400 to-yellow-400 bg-clip-text text-transparent">{highScore}</div>
+                </div>
+                <div className="text-xs text-gray-500 text-right">
+                  {highScore > 0 ? 'Beat your record!' : 'Be the first!'}
                 </div>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* GAME SCREEN - Shows when gameStarted is true */}
-        {gameStarted && (
-          <>
-            {/* Modern app header */}
-            <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 to-transparent z-10 p-3 backdrop-blur-sm">
-              <div className="flex justify-between items-center">
-                <div className="text-center">
-                  <div className="text-[10px] font-medium text-gray-400 tracking-wider">SCORE</div>
-                  <div className="text-2xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">{score}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-[10px] font-medium text-gray-400 tracking-wider">NEXT</div>
-                  <div className="text-xl font-bold text-orange-300 drop-shadow-[0_2px_4px_rgba(255,119,0,0.3)]">
-                    #{currentTileOrder}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-[10px] font-medium text-gray-400 tracking-wider">COMBO</div>
-                  <div className="text-xl font-bold text-yellow-300 drop-shadow-[0_2px_4px_rgba(255,204,0,0.3)]">{combo}×</div>
+      {/* GAME SCREEN - Shows when gameStarted is true */}
+      {gameStarted && (
+        <>
+          {/* Modern app header */}
+          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 to-transparent z-10 p-2 backdrop-blur-sm">
+            <div className="flex justify-between items-center">
+              <div className="text-center">
+                <div className="text-[9px] font-medium text-gray-400 tracking-wider">SCORE</div>
+                <div className="text-xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">{score}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[9px] font-medium text-gray-400 tracking-wider">NEXT</div>
+                <div className="text-lg font-bold text-orange-300 drop-shadow-[0_2px_4px_rgba(255,119,0,0.3)]">
+                  #{currentTileOrder}
                 </div>
               </div>
-              
-              {/* Level and Speed indicator */}
-              <div className="absolute top-12 left-1/2 transform -translate-x-1/2 flex gap-3">
-                <div className={`px-3 py-1 rounded-full backdrop-blur-sm border ${
-                  level === 'Easy' ? 'bg-green-500/20 text-green-300 border-green-500/30' : 
-                  level === 'Medium' ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' : 
-                  'bg-red-500/20 text-red-300 border-red-500/30'
-                } text-xs font-medium`}>
-                  {level}
-                </div>
-                <div className="bg-orange-500/20 text-orange-300 text-xs font-medium px-3 py-1 rounded-full backdrop-blur-sm border border-orange-500/30">
-                  SPEED ×{gameSpeed.toFixed(1)}
-                </div>
+              <div className="text-center">
+                <div className="text-[9px] font-medium text-gray-400 tracking-wider">COMBO</div>
+                <div className="text-lg font-bold text-yellow-300 drop-shadow-[0_2px_4px_rgba(255,204,0,0.3)]">{combo}×</div>
               </div>
             </div>
-
-            {/* Game columns - Entire column is clickable */}
-            <div className="flex h-full pt-20 touch-none">
-              {Array.from({ length: columns }).map((_, columnIndex) => (
-                <button
-                  key={`column_${columnIndex}`}
-                  className={`flex-1 relative transition-all duration-100 touch-none ${
-                    touchActive && currentTile?.column === columnIndex ? 'bg-orange-500/10' : 'bg-transparent'
-                  } ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} hover:bg-gray-800/10 active:bg-orange-500/20`}
-                  onClick={(e) => handleColumnTap(columnIndex, e)}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    handleColumnTap(columnIndex, e);
-                  }}
-                >
-                  {/* Column lane guide lines */}
-                  <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
-                  
-                  {/* Highlight current tile's column */}
-                  {currentTile && currentTile.column === columnIndex && (
-                    <div className="absolute inset-0 bg-gradient-to-b from-orange-500/5 via-orange-400/3 to-transparent"></div>
-                  )}
-                  
-                  {/* Column number at top */}
-                  <div className="absolute top-2 left-1/2 transform -translate-x-1/2 text-xs text-gray-500 font-medium">
-                    Col {columnIndex + 1}
-                  </div>
-                </button>
-              ))}
+            
+            {/* Level and Speed indicator */}
+            <div className="absolute top-10 left-1/2 transform -translate-x-1/2 flex gap-2">
+              <div className={`px-2 py-1 rounded-full backdrop-blur-sm border ${
+                level === 'Easy' ? 'bg-green-500/20 text-green-300 border-green-500/30' : 
+                level === 'Medium' ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' : 
+                'bg-red-500/20 text-red-300 border-red-500/30'
+              } text-xs font-medium`}>
+                {level}
+              </div>
+              <div className="bg-orange-500/20 text-orange-300 text-xs font-medium px-2 py-1 rounded-full backdrop-blur-sm border border-orange-500/30">
+                SPEED ×{gameSpeed.toFixed(1)}
+              </div>
             </div>
+          </div>
 
-            {/* Falling orange tiles - FIXED FOR MOBILE DISPLAY */}
-            {tiles.map(tile => (
-              <div
-                key={tile.id}
-                className={`absolute touch-none ${gameContainerRef.current && gameContainerRef.current.clientWidth < 400 ? 'w-12 h-12' : 'w-16 h-16'} transition-all duration-100 rounded-lg ${
-                  tile.tapped ? 'opacity-30 scale-90' : 'opacity-100'
-                } ${tile.active && !tile.tapped && currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
-                style={{
-                  left: `calc(${(tile.column * 25) + 12.5}% + ${tile.xOffset}px)`,
-                  top: `${tile.position}%`,
-                  transform: 'translate(-50%, -100%)',
+          {/* Game columns - Entire column is clickable */}
+          <div className="flex h-full pt-16 touch-none">
+            {Array.from({ length: columns }).map((_, columnIndex) => (
+              <button
+                key={`column_${columnIndex}`}
+                className={`flex-1 relative transition-all duration-100 touch-none ${
+                  touchActive && currentTile?.column === columnIndex ? 'bg-orange-500/10' : 'bg-transparent'
+                } ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} active:bg-orange-500/20`}
+                onClick={(e) => handleColumnTap(columnIndex, e)}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  handleColumnTap(columnIndex, e);
                 }}
               >
-                {/* Orange tile with gradient and glow */}
-                <div className={`absolute inset-0 rounded-lg ${
-                  tile.active && !tile.tapped
-                    ? currentTile?.id === tile.id
-                      ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_30px_rgba(255,119,0,0.6)] animate-pulse'
-                      : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_15px_rgba(255,119,0,0.3)] opacity-80'
-                    : 'bg-gradient-to-br from-green-500 to-green-700 opacity-50'
-                } border-2 ${tile.active && !tile.tapped ? 'border-orange-300/60' : 'border-green-400/30'}`}>
-                  {/* Order number */}
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className={`${gameContainerRef.current && gameContainerRef.current.clientWidth < 400 ? 'text-lg' : 'text-xl'} font-bold ${
-                      tile.active && !tile.tapped
-                        ? currentTile?.id === tile.id ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-white/80'
-                        : 'text-green-200'
-                    }`}>
-                      {tile.order}
-                    </div>
-                  </div>
-                  
-                  {/* Inner shine effect */}
-                  <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/20 to-transparent rounded-t-lg"></div>
-                  
-                  {/* Active indicator for current tile */}
-                  {tile.active && !tile.tapped && currentTile?.id === tile.id && (
-                    <>
-                      <div className="absolute inset-0 rounded-lg animate-ping bg-gradient-to-b from-orange-400/20 to-transparent"></div>
-                      <div className="absolute -inset-3 rounded-lg border-2 border-orange-400/40 animate-pulse"></div>
-                    </>
-                  )}
-                  
-                  {/* Tap indicator for early taps */}
-                  {tile.active && !tile.tapped && currentTile?.id === tile.id && tile.position < 50 && (
-                    <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 text-xs text-orange-300 font-bold whitespace-nowrap">
-                      Tap Now! +{Math.round((100 - tile.position * 0.8) * multiplier)}pts
-                    </div>
-                  )}
+                {/* Column lane guide lines */}
+                <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
+                
+                {/* Highlight current tile's column */}
+                {currentTile && currentTile.column === columnIndex && (
+                  <div className="absolute inset-0 bg-gradient-to-b from-orange-500/5 via-orange-400/3 to-transparent"></div>
+                )}
+                
+                {/* Column number at top */}
+                <div className="absolute top-1 left-1/2 transform -translate-x-1/2 text-[10px] text-gray-500 font-medium">
+                  {columnIndex + 1}
                 </div>
-              </div>
+              </button>
             ))}
+          </div>
 
-            {/* Current tile indicator */}
-            {currentTile && gameActive && (
-              <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 text-center z-10 touch-none">
-                <div className="bg-gradient-to-r from-gray-900/80 to-black/80 text-orange-300 text-sm px-4 py-2 rounded-full backdrop-blur-sm border border-orange-500/30">
-                  TAP IN: <span className="font-bold text-white">Column {currentTile.column + 1}</span>
-                  <div className="text-xs text-orange-400">Tile #{currentTile.order}</div>
+          {/* Falling orange tiles - FIXED FOR MOBILE DISPLAY */}
+          {tiles.map(tile => (
+            <div
+              key={tile.id}
+              className={`absolute touch-none w-14 h-14 transition-all duration-100 rounded-lg ${
+                tile.tapped ? 'opacity-30 scale-90' : 'opacity-100'
+              } ${tile.active && !tile.tapped && currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
+              style={{
+                left: `calc(${(tile.column * 25) + 12.5}% + ${tile.xOffset}px)`,
+                top: `${tile.position}%`,
+                transform: 'translate(-50%, -100%)',
+              }}
+            >
+              {/* Orange tile with gradient and glow */}
+              <div className={`absolute inset-0 rounded-lg ${
+                tile.active && !tile.tapped
+                  ? currentTile?.id === tile.id
+                    ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_20px_rgba(255,119,0,0.6)] animate-pulse'
+                    : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_10px_rgba(255,119,0,0.3)] opacity-80'
+                  : 'bg-gradient-to-br from-green-500 to-green-700 opacity-50'
+              } border-2 ${tile.active && !tile.tapped ? 'border-orange-300/60' : 'border-green-400/30'}`}>
+                {/* Order number */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className={`text-lg font-bold ${
+                    tile.active && !tile.tapped
+                      ? currentTile?.id === tile.id ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-white/80'
+                      : 'text-green-200'
+                  }`}>
+                    {tile.order}
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {/* Timing feedback with smooth animation */}
-            {showFeedback.show && (
-              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-3xl font-bold z-20 touch-none ${
-                showFeedback.type === 'perfect' 
-                  ? 'text-yellow-300 animate-bounce' 
-                  : 'text-orange-300 animate-pulse'
-              }`}>
-                {showFeedback.text}
-                {showFeedback.type === 'perfect' && (
-                  <div className="text-lg text-center mt-2 text-yellow-200">
-                    +{Math.round(100 * multiplier)} pts
+                
+                {/* Inner shine effect */}
+                <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/20 to-transparent rounded-t-lg"></div>
+                
+                {/* Active indicator for current tile */}
+                {tile.active && !tile.tapped && currentTile?.id === tile.id && (
+                  <>
+                    <div className="absolute inset-0 rounded-lg animate-ping bg-gradient-to-b from-orange-400/20 to-transparent"></div>
+                    <div className="absolute -inset-2 rounded-lg border-2 border-orange-400/40 animate-pulse"></div>
+                  </>
+                )}
+                
+                {/* Tap indicator for early taps */}
+                {tile.active && !tile.tapped && currentTile?.id === tile.id && tile.position < 50 && (
+                  <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[10px] text-orange-300 font-bold whitespace-nowrap">
+                    +{Math.round((100 - tile.position * 0.8) * multiplier)}pts
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          ))}
 
-            {/* High streak notification */}
-            {streak >= 5 && streak % 5 === 0 && (
-              <div className="absolute top-40 left-1/2 transform -translate-x-1/2 text-xl font-bold text-yellow-300 animate-bounce z-10 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 px-4 py-2 rounded-full backdrop-blur-sm touch-none">
-                ✨ {streak} STREAK! ×{multiplier.toFixed(1)}
+          {/* Current tile indicator */}
+          {currentTile && gameActive && (
+            <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 text-center z-10 touch-none">
+              <div className="bg-gradient-to-r from-gray-900/80 to-black/80 text-orange-300 text-xs px-3 py-1.5 rounded-full backdrop-blur-sm border border-orange-500/30">
+                TAP IN: <span className="font-bold text-white">Column {currentTile.column + 1}</span>
+                <div className="text-[10px] text-orange-400">Tile #{currentTile.order}</div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Game Over Screen with modern design */}
-            {!gameActive && gameStarted && (
-              <div className="absolute inset-0 bg-gradient-to-b from-black/95 via-gray-950/95 to-black/95 flex flex-col items-center justify-center z-30 p-4 backdrop-blur-sm touch-auto">
-                <div className="bg-gradient-to-b from-gray-900/90 to-black/90 rounded-2xl p-6 text-center border border-orange-500/30 w-full shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
-                  {/* Result emoji */}
-                  <div className="text-5xl mb-4">
-                    {score >= 500 ? '🏆' : score >= 300 ? '⭐' : '🎵'}
+          {/* Timing feedback with smooth animation */}
+          {showFeedback.show && (
+            <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-2xl font-bold z-20 touch-none ${
+              showFeedback.type === 'perfect' 
+                ? 'text-yellow-300 animate-bounce' 
+                : 'text-orange-300 animate-pulse'
+            }`}>
+              {showFeedback.text}
+              {showFeedback.type === 'perfect' && (
+                <div className="text-sm text-center mt-1 text-yellow-200">
+                  +{Math.round(100 * multiplier)} pts
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* High streak notification */}
+          {streak >= 5 && streak % 5 === 0 && (
+            <div className="absolute top-36 left-1/2 transform -translate-x-1/2 text-lg font-bold text-yellow-300 animate-bounce z-10 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 px-3 py-1.5 rounded-full backdrop-blur-sm touch-none">
+              ✨ {streak} STREAK! ×{multiplier.toFixed(1)}
+            </div>
+          )}
+
+          {/* Level progress indicator */}
+          <div className="absolute bottom-24 left-0 right-0 text-center z-10 touch-none">
+            <div className={`inline-block ${
+              level === 'Easy' ? 'bg-green-500/20 text-green-300' : 
+              level === 'Medium' ? 'bg-yellow-500/20 text-yellow-300' : 
+              'bg-red-500/20 text-red-300'
+            } text-xs px-3 py-1.5 rounded-full backdrop-blur-sm border ${
+              level === 'Easy' ? 'border-green-500/30' : 
+              level === 'Medium' ? 'border-yellow-500/30' : 
+              'border-red-500/30'
+            }`}>
+              {level === 'Easy' ? '🎵 EASY - Starting level' : 
+               level === 'Medium' ? '⚡ MEDIUM - Speed increased!' : 
+               '🔥 FAST - Maximum speed!'}
+            </div>
+          </div>
+
+          {/* Music indicator */}
+          <div className="absolute top-20 right-2 bg-black/30 rounded-full p-1.5 z-10">
+            <div className="text-[10px] text-gray-400 flex items-center gap-1">
+              <span className={musicPlaying ? 'text-green-400' : 'text-red-400'}>
+                {musicPlaying ? '🔊' : '🔈'}
+              </span>
+            </div>
+          </div>
+
+          {/* Game Over Screen */}
+          {!gameActive && gameStarted && (
+            <div className="absolute inset-0 bg-gradient-to-b from-black/95 via-gray-950/95 to-black/95 flex flex-col items-center justify-center z-30 p-3 backdrop-blur-sm touch-auto">
+              <div className="bg-gradient-to-b from-gray-900/90 to-black/90 rounded-2xl p-4 text-center border border-orange-500/30 w-full shadow-[0_20px_60px_rgba(0,0,0,0.5)] max-w-[95%]">
+                {/* Result emoji */}
+                <div className="text-4xl mb-3">
+                  {score >= 500 ? '🏆' : score >= 300 ? '⭐' : '🎵'}
+                </div>
+                
+                {/* Result title */}
+                <div className="text-xl font-bold text-white mb-2">
+                  {score >= 500 ? 'SEQUENCE MASTER!' : 
+                   score >= 300 ? 'GREAT CHAIN!' : 
+                   score >= 100 ? 'GOOD SEQUENCE!' : 'GAME OVER'}
+                </div>
+                
+                {/* Score display */}
+                <div className="text-5xl font-bold mb-3 bg-gradient-to-r from-orange-400 to-yellow-400 bg-clip-text text-transparent drop-shadow-[0_4px_8px_rgba(255,119,0,0.3)]">
+                  {score}
+                </div>
+                
+                {/* Stats */}
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  <div className="bg-gray-900/50 rounded-lg p-2">
+                    <div className="text-[10px] text-gray-400">MAX COMBO</div>
+                    <div className="text-lg font-bold text-orange-300">{combo}×</div>
                   </div>
-                  
-                  {/* Result title */}
-                  <div className="text-2xl font-bold text-white mb-2">
-                    {score >= 500 ? 'SEQUENCE MASTER!' : 
-                     score >= 300 ? 'GREAT CHAIN!' : 
-                     score >= 100 ? 'GOOD SEQUENCE!' : 'GAME OVER'}
+                  <div className="bg-gray-900/50 rounded-lg p-2">
+                    <div className="text-[10px] text-gray-400">FINAL LEVEL</div>
+                    <div className={`text-lg font-bold ${
+                      level === 'Easy' ? 'text-green-300' : 
+                      level === 'Medium' ? 'text-yellow-300' : 
+                      'text-red-300'
+                    }`}>{level}</div>
                   </div>
-                  
-                  {/* Score display */}
-                  <div className="text-6xl font-bold mb-3 bg-gradient-to-r from-orange-400 to-yellow-400 bg-clip-text text-transparent drop-shadow-[0_4px_8px_rgba(255,119,0,0.3)]">
-                    {score}
+                  <div className="bg-gray-900/50 rounded-lg p-2">
+                    <div className="text-[10px] text-gray-400">HIGH SCORE</div>
+                    <div className="text-lg font-bold text-yellow-300">{highScore}</div>
                   </div>
-                  
-                  {/* Stats */}
-                  <div className="grid grid-cols-2 gap-3 mb-6">
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-400">MAX COMBO</div>
-                      <div className="text-xl font-bold text-orange-300">{combo}×</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-400">FINAL LEVEL</div>
-                      <div className={`text-xl font-bold ${
-                        level === 'Easy' ? 'text-green-300' : 
-                        level === 'Medium' ? 'text-yellow-300' : 
-                        'text-red-300'
-                      }`}>{level}</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-400">HIGH SCORE</div>
-                      <div className="text-xl font-bold text-yellow-300">{highScore}</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-400">BEST MULT</div>
-                      <div className="text-xl font-bold text-green-300">×{multiplier.toFixed(1)}</div>
-                    </div>
-                  </div>
-                  
-                  {/* Action buttons */}
-                  <div className="flex gap-3">
-                    <button
-                      onClick={restartGame}
-                      className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-[0_10px_30px_rgba(255,119,0,0.3)] active:scale-95 transition-all duration-200 border border-orange-300/30 touch-auto"
-                    >
-                      PLAY AGAIN
-                    </button>
-                    <button
-                      onClick={exitToMenu}
-                      className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:shadow-[0_10px_30px_rgba(0,0,0,0.3)] active:scale-95 transition-all duration-200 border border-gray-700/50 touch-auto"
-                    >
-                      MENU
-                    </button>
-                  </div>
-                  
-                  {/* Tips */}
-                  <div className="text-xs text-gray-500 mt-4">
-                    {score < 100 ? 'Tip: Find the tile with the correct order number and tap its column' :
-                     score < 300 ? 'Tip: Tapping earlier gives more points and better sounds!' :
-                     'Tip: Perfect timing gives bonus points and special sounds!'}
+                  <div className="bg-gray-900/50 rounded-lg p-2">
+                    <div className="text-[10px] text-gray-400">BEST MULT</div>
+                    <div className="text-lg font-bold text-green-300">×{multiplier.toFixed(1)}</div>
                   </div>
                 </div>
-              </div>
-            )}
-
-            {/* Level progress indicator with time remaining */}
-            <div className="absolute bottom-28 left-0 right-0 text-center z-10 touch-none">
-              <div className={`inline-block ${
-                level === 'Easy' ? 'bg-green-500/20 text-green-300' : 
-                level === 'Medium' ? 'bg-yellow-500/20 text-yellow-300' : 
-                'bg-red-500/20 text-red-300'
-              } text-sm px-4 py-2 rounded-full backdrop-blur-sm border ${
-                level === 'Easy' ? 'border-green-500/30' : 
-                level === 'Medium' ? 'border-yellow-500/30' : 
-                'border-red-500/30'
-              }`}>
-                {level === 'Easy' ? '🎵 EASY - Starting level' : 
-                 level === 'Medium' ? '⚡ MEDIUM - Speed increased!' : 
-                 '🔥 FAST - Maximum speed!'}
-              </div>
-            </div>
-
-            {/* Music indicator */}
-            <div className="absolute top-24 right-3 bg-black/30 rounded-full p-2 z-10">
-              <div className="text-xs text-gray-400 flex items-center gap-1">
-                <span className={musicPlaying ? 'text-green-400' : 'text-red-400'}>
-                  {musicPlaying ? '🔊' : '🔈'}
-                </span>
-                <span className="hidden sm:inline">Music</span>
+                
+                {/* Action buttons */}
+                <div className="flex gap-2 mb-3">
+                  <button
+                    onClick={restartGame}
+                    className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-2.5 px-3 rounded-xl shadow-lg hover:shadow-[0_8px_20px_rgba(255,119,0,0.3)] active:scale-95 transition-all duration-200 border border-orange-300/30 touch-auto text-sm"
+                  >
+                    PLAY AGAIN
+                  </button>
+                  <button
+                    onClick={exitToMenu}
+                    className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-2.5 px-3 rounded-xl shadow-lg hover:shadow-[0_8px_20px_rgba(0,0,0,0.3)] active:scale-95 transition-all duration-200 border border-gray-700/50 touch-auto text-sm"
+                  >
+                    MENU
+                  </button>
+                </div>
+                
+                {/* Tips */}
+                <div className="text-[10px] text-gray-500">
+                  {score < 100 ? 'Tip: Find the tile with the correct order number and tap its column' :
+                   score < 300 ? 'Tip: Tapping earlier gives more points and better sounds!' :
+                   'Tip: Perfect timing gives bonus points and special sounds!'}
+                </div>
               </div>
             </div>
-          </>
-        )}
-      </div>
-
-      {/* Status indicator */}
-      <div className="mt-4 text-center touch-none">
-        {!gameStarted ? (
-          <div className="text-xs text-orange-400 font-light tracking-wide">
-            Tap START GAME above to begin! 🔊 Music enabled
-          </div>
-        ) : gameActive ? (
-          <div className="text-xs text-gray-400 font-light">
-            Level: {level} • Speed: ×{gameSpeed.toFixed(1)} • Next: #{currentTileOrder}
-          </div>
-        ) : (
-          <div className="text-xs text-gray-500 font-light">
-            Tap START GAME to play again
-          </div>
-        )}
-      </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
