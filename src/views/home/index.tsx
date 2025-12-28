@@ -67,6 +67,7 @@ const GameSandbox: FC = () => {
     speed: number;
     order: number;
     xOffset: number;
+    released: boolean;
   }>>([]);
   const [showFeedback, setShowFeedback] = useState<{type: 'perfect' | 'good' | 'miss', show: boolean, text: string}>({type: 'good', show: false, text: ''});
   const [highScore, setHighScore] = useState(0);
@@ -83,12 +84,15 @@ const GameSandbox: FC = () => {
   const [announcementText, setAnnouncementText] = useState('');
   const [lastTapTime, setLastTapTime] = useState<number | null>(null);
   const [isProcessingTap, setIsProcessingTap] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [menuState, setMenuState] = useState<'main' | 'gameOver'>('main');
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const tileIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const levelIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const announcementTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const releaseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scoreUpdateRef = useRef(score);
   const startTimeRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -96,8 +100,13 @@ const GameSandbox: FC = () => {
   const backgroundMusicRef = useRef<OscillatorNode | null>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
-  const tileOrderMapRef = useRef<Map<number, string>>(new Map()); // Maps order number to tile ID
-  const currentTileIdRef = useRef<string | null>(null);
+  const tileOrderMapRef = useRef<Map<number, string>>(new Map());
+  const tileReleaseQueueRef = useRef<Array<{
+    id: string;
+    column: number;
+    order: number;
+    releaseTime: number;
+  }>>([]);
 
   // Initialize audio context
   const initAudio = () => {
@@ -329,78 +338,87 @@ const GameSandbox: FC = () => {
     return `tile_${tileCounter.current}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   };
 
-  // Generate tiles based on current level
-  useEffect(() => {
-    if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
+  // Generate tiles in batches with staggered release
+  const generateTileBatch = (count: number) => {
+    const now = Date.now();
+    const newTiles = [];
     
-    const generateTile = () => {
-      if (!gameActive || !gameStarted) return;
-      
+    for (let i = 0; i < count; i++) {
+      const order = tileCounter.current + 1;
       const orangeColumn = Math.floor(Math.random() * columns);
-      // Slower speeds for visual fun
       const baseSpeed = (level === 'Easy' ? 0.8 : level === 'Medium' ? 1.2 : 1.8) * gameSpeed;
       
       const newTile = {
         id: generateId(),
         column: orangeColumn,
-        position: -20,
+        position: -30, // Start off-screen
         active: true,
         speed: baseSpeed,
-        order: tileCounter.current,
+        order: order,
         xOffset: 0,
+        released: false,
       };
       
-      // Store mapping of order number to tile ID
-      tileOrderMapRef.current.set(tileCounter.current, newTile.id);
+      // Calculate release time (staggered)
+      const releaseTime = now + (i * 500); // 500ms between releases
       
-      setTiles(prev => {
-        const newTiles = [...prev, newTile];
-        // Allow more tiles on screen at once
-        const maxTotalTiles = level === 'Easy' ? 8 : level === 'Medium' ? 12 : 16;
-        if (newTiles.length > maxTotalTiles) {
-          // Remove the oldest tile
-          const removed = newTiles.shift();
-          if (removed) {
-            tileOrderMapRef.current.delete(removed.order);
-          }
-          return newTiles;
-        }
-        return newTiles;
+      tileOrderMapRef.current.set(order, newTile.id);
+      tileReleaseQueueRef.current.push({
+        id: newTile.id,
+        column: orangeColumn,
+        order: order,
+        releaseTime: releaseTime,
       });
-    };
+      
+      // Add to tiles array immediately but not released yet
+      newTiles.push(newTile);
+      tileCounter.current = order;
+    }
+    
+    setTiles(prev => [...prev, ...newTiles]);
+    
+    // Schedule tile releases
+    tileReleaseQueueRef.current.forEach((queuedTile, index) => {
+      setTimeout(() => {
+        setTiles(prev => prev.map(tile => 
+          tile.id === queuedTile.id ? { ...tile, released: true, position: -20 } : tile
+        ));
+        
+        // Remove from queue
+        tileReleaseQueueRef.current = tileReleaseQueueRef.current.filter(t => t.id !== queuedTile.id);
+      }, queuedTile.releaseTime - now);
+    });
+  };
+
+  // Generate initial batch when game starts
+  useEffect(() => {
+    if (gameActive && gameStarted && tiles.length === 0 && tileReleaseQueueRef.current.length === 0) {
+      // Generate 3 tiles immediately but release them staggered
+      generateTileBatch(3);
+    }
+  }, [gameActive, gameStarted, tiles.length, level, gameSpeed]);
+
+  // Continuously generate more tiles as needed
+  useEffect(() => {
+    if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
 
     if (tileIntervalRef.current) {
       clearInterval(tileIntervalRef.current);
     }
 
-    // Faster tile generation so we see more tiles
-    let tileInterval;
-    switch (level) {
-      case 'Easy':
-        tileInterval = 1000;
-        break;
-      case 'Medium':
-        tileInterval = 700;
-        break;
-      case 'Hard':
-        tileInterval = 500;
-        break;
-      default:
-        tileInterval = 1000;
-    }
-
+    // Generate new batch when queue is running low
     tileIntervalRef.current = setInterval(() => {
-      if (gameActive && gameStarted) {
-        generateTile();
+      if (tileReleaseQueueRef.current.length < 2) {
+        generateTileBatch(3);
       }
-    }, tileInterval / gameSpeed);
+    }, 2000);
 
     return () => {
       if (tileIntervalRef.current) {
         clearInterval(tileIntervalRef.current);
       }
     };
-  }, [gameActive, gameSpeed, gameStarted, level, columns, levelStage]);
+  }, [gameActive, gameStarted, level, columns, levelStage]);
 
   // Game loop for moving tiles
   useEffect(() => {
@@ -414,7 +432,7 @@ const GameSandbox: FC = () => {
       setTiles(prev => {
         const updatedTiles = prev.map(tile => ({
           ...tile,
-          position: tile.position + tile.speed,
+          position: tile.released ? tile.position + tile.speed : tile.position,
         }));
         
         // Find current tile ID from the order map
@@ -424,7 +442,7 @@ const GameSandbox: FC = () => {
           const currentTile = updatedTiles.find(t => t.id === currentTileId);
           
           // Check if current tile reached bottom without being tapped
-          if (currentTile && currentTile.position > 100) {
+          if (currentTile && currentTile.released && currentTile.position > 100) {
             // Current tile missed - game over
             playTileSound(150, 'miss');
             setTimeout(() => handleGameOver('Missed tile #' + currentTile.order + '!'), 50);
@@ -448,11 +466,10 @@ const GameSandbox: FC = () => {
 
   // Handle column tap - FIXED FOR MOBILE RESPONSIVENESS
   const handleColumnTap = (columnIndex: number) => {
-    // Prevent multiple taps while processing
     if (isProcessingTap) return;
     
     const now = Date.now();
-    if (now - lastTapRef.current < 50) { // Reduced from 100ms to 50ms
+    if (now - lastTapRef.current < 50) {
       return;
     }
     
@@ -462,7 +479,7 @@ const GameSandbox: FC = () => {
     lastTapRef.current = now;
     
     setTouchActive(true);
-    setTimeout(() => setTouchActive(false), 30); // Faster feedback
+    setTimeout(() => setTouchActive(false), 30);
 
     // Get current tile ID from the order map
     const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
@@ -475,14 +492,13 @@ const GameSandbox: FC = () => {
     // Find the current tile
     const currentTile = tiles.find(tile => tile.id === currentTileId);
 
-    if (!currentTile) {
+    if (!currentTile || !currentTile.released) {
       setIsProcessingTap(false);
       return;
     }
 
     // Check if tapped column has the current tile
     if (currentTile.column === columnIndex) {
-      // Calculate points based on timing
       const positionScore = Math.max(20, Math.round(100 - currentTile.position * 0.6));
       const basePoints = positionScore;
       let points = 0;
@@ -530,7 +546,7 @@ const GameSandbox: FC = () => {
       
       setTimeout(() => {
         setShowFeedback(prev => ({...prev, show: false}));
-      }, 200); // Shorter feedback
+      }, 200);
 
       // Remove the tapped tile IMMEDIATELY
       setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
@@ -538,12 +554,18 @@ const GameSandbox: FC = () => {
       // Clear from order map
       tileOrderMapRef.current.delete(currentTileOrder);
       
+      // If no more released tiles available, generate more immediately
+      const nextTileId = tileOrderMapRef.current.get(nextOrder);
+      if (!nextTileId) {
+        generateTileBatch(1);
+      }
+      
       setIsProcessingTap(false);
       
     } else {
       // Tapped wrong column - game over
       playTileSound(100, 'miss');
-      handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1) + ' for tile #' + currentTile.order);
+      handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1));
       setIsProcessingTap(false);
     }
   };
@@ -554,18 +576,28 @@ const GameSandbox: FC = () => {
     stopBackgroundMusic();
     setGameActive(false);
     setShowFeedback({type: 'miss', show: true, text: reason});
-    setTimeout(() => setShowFeedback(prev => ({...prev, show: false})), 800);
+    
     if (score > highScore) setHighScore(score);
     
+    // Clear all intervals and timeouts
     if (gameIntervalRef.current) clearInterval(gameIntervalRef.current);
     if (tileIntervalRef.current) clearInterval(tileIntervalRef.current);
     if (levelIntervalRef.current) clearInterval(levelIntervalRef.current);
     if (announcementTimeoutRef.current) clearTimeout(announcementTimeoutRef.current);
+    if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
     
     gameIntervalRef.current = null;
     tileIntervalRef.current = null;
     levelIntervalRef.current = null;
     announcementTimeoutRef.current = null;
+    releaseTimeoutRef.current = null;
+    
+    // Show game over menu after a short delay
+    setTimeout(() => {
+      setShowMenu(true);
+      setMenuState('gameOver');
+      setShowFeedback(prev => ({...prev, show: false}));
+    }, 800);
   };
 
   const startGame = () => {
@@ -588,12 +620,13 @@ const GameSandbox: FC = () => {
     setGameTime(0);
     tileCounter.current = 0;
     tileOrderMapRef.current.clear();
-    currentTileIdRef.current = null;
+    tileReleaseQueueRef.current = [];
     startTimeRef.current = Date.now();
     lastTapRef.current = 0;
     setIsProcessingTap(false);
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
+    setShowMenu(false);
   };
 
   const restartGame = () => {
@@ -616,12 +649,13 @@ const GameSandbox: FC = () => {
     setGameTime(0);
     tileCounter.current = 0;
     tileOrderMapRef.current.clear();
-    currentTileIdRef.current = null;
+    tileReleaseQueueRef.current = [];
     startTimeRef.current = Date.now();
     lastTapRef.current = 0;
     setIsProcessingTap(false);
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
+    setShowMenu(false);
     
     if (announcementTimeoutRef.current) {
       clearTimeout(announcementTimeoutRef.current);
@@ -640,19 +674,23 @@ const GameSandbox: FC = () => {
     setShowAnnouncement(false);
     setTiles([]);
     tileOrderMapRef.current.clear();
-    currentTileIdRef.current = null;
+    tileReleaseQueueRef.current = [];
     startTimeRef.current = null;
+    setShowMenu(true);
+    setMenuState('main');
     cleanupAudio();
     
     if (gameIntervalRef.current) clearInterval(gameIntervalRef.current);
     if (tileIntervalRef.current) clearInterval(tileIntervalRef.current);
     if (levelIntervalRef.current) clearInterval(levelIntervalRef.current);
     if (announcementTimeoutRef.current) clearTimeout(announcementTimeoutRef.current);
+    if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
     
     gameIntervalRef.current = null;
     tileIntervalRef.current = null;
     levelIntervalRef.current = null;
     announcementTimeoutRef.current = null;
+    releaseTimeoutRef.current = null;
   };
 
   // Faster multiplier progression
@@ -672,24 +710,15 @@ const GameSandbox: FC = () => {
 
   // Find the current tile for display
   const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
-  const currentTile = currentTileId ? tiles.find(t => t.id === currentTileId) : null;
+  const currentTile = currentTileId ? tiles.find(t => t.id === currentTileId && t.released) : null;
 
-  // Generate start tile when game is ready
+  // Show main menu initially
   useEffect(() => {
-    if (!gameStarted && tiles.length === 0 && !showAnnouncement) {
-      const startTile = {
-        id: 'start_tile',
-        column: 1, // Center column
-        position: 50, // Center position
-        active: true,
-        speed: 0,
-        order: 0,
-        xOffset: 0,
-      };
-      setTiles([startTile]);
-      setCurrentTileOrder(1);
+    if (!gameStarted && !showMenu) {
+      setShowMenu(true);
+      setMenuState('main');
     }
-  }, [gameStarted, tiles.length, showAnnouncement]);
+  }, [gameStarted, showMenu]);
 
   return (
     <div className="flex items-center justify-center w-full h-full min-h-[480px] bg-gradient-to-b from-gray-950 to-black p-0 overflow-hidden">
@@ -701,42 +730,95 @@ const GameSandbox: FC = () => {
         {/* App-like glass morphism background */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,119,0,0.05),transparent_50%)]"></div>
         
-        {/* INITIAL SCREEN WITH CENTERED START BUTTON */}
-        {!gameStarted && tiles.length > 0 && tiles[0].id === 'start_tile' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center z-20 p-4">
-            <div className="text-center mb-6">
-              <div className="text-xl font-bold bg-gradient-to-r from-orange-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent mb-1">
-                SEQUENCE RHYTHM
-              </div>
-              <div className="text-xs text-gray-400">Tap START to begin the challenge</div>
-            </div>
-            
-            {/* Large Centered Start Button */}
-            <button
-              onClick={startGame}
-              onTouchStart={(e) => {
-                e.preventDefault();
-                startGame();
-              }}
-              className="relative w-32 h-32 bg-gradient-to-br from-green-500 via-green-400 to-emerald-600 rounded-2xl shadow-[0_0_40px_rgba(72,187,120,0.8)] animate-pulse border-4 border-emerald-300 flex flex-col items-center justify-center cursor-pointer touch-auto z-30 active:scale-95 transition-transform"
-            >
-              <div className="absolute inset-0 rounded-2xl overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/40 to-transparent rounded-t-2xl"></div>
-              </div>
-              <div className="relative text-2xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
-                START
-              </div>
-              <div className="relative text-xs text-emerald-100 mt-1">
-                Tap Here!
-              </div>
-              <div className="absolute -inset-4 rounded-3xl border-4 border-emerald-400/30 animate-ping"></div>
-            </button>
-            
-            <div className="mt-6 text-center">
-              <div className="text-xs text-gray-500 mb-2">🏆 High Score: {highScore}</div>
-              <div className="text-[10px] text-gray-600">
-                Tap tiles in sequence • Fast mobile response
-              </div>
+        {/* MENU SCREENS */}
+        {showMenu && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center z-40 p-4 backdrop-blur-sm bg-gradient-to-b from-black/95 via-gray-950/95 to-black/95">
+            <div className="bg-gradient-to-b from-gray-900/90 to-black/90 rounded-2xl p-6 text-center border border-orange-500/30 w-full max-w-[95%] shadow-[0_20px_60px_rgba(255,119,0,0.3)]">
+              {menuState === 'main' ? (
+                <>
+                  <div className="text-4xl mb-4">
+                    🎵
+                  </div>
+                  <div className="text-2xl font-bold bg-gradient-to-r from-orange-400 via-orange-300 to-yellow-300 bg-clip-text text-transparent mb-2">
+                    SEQUENCE RHYTHM
+                  </div>
+                  <div className="text-sm text-gray-400 mb-6">
+                    Tap tiles in numerical order
+                  </div>
+                  
+                  <button
+                    onClick={startGame}
+                    className="w-full bg-gradient-to-r from-orange-500 via-orange-400 to-yellow-500 text-white font-bold text-lg py-3 px-4 rounded-2xl shadow-[0_0_20px_rgba(255,119,0,0.6)] hover:shadow-[0_0_30px_rgba(255,119,0,0.8)] active:scale-95 transition-all duration-200 border-4 border-orange-300 mb-4"
+                  >
+                    START GAME
+                  </button>
+                  
+                  <div className="text-xs text-gray-500 mb-2">🏆 High Score: {highScore}</div>
+                  <div className="text-[10px] text-gray-600">
+                    Multiple tiles generated • Fast mobile response
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-4xl mb-4">
+                    {score >= 1000 ? '🏆' : score >= 500 ? '⭐' : '🎵'}
+                  </div>
+                  
+                  <div className="text-xl font-bold text-white mb-2">
+                    {score >= 1000 ? 'RHYTHM MASTER!' : 
+                     score >= 500 ? 'GREAT SCORE!' : 
+                     score >= 200 ? 'GOOD GAME!' : 'GAME OVER'}
+                  </div>
+                  
+                  <div className="text-5xl font-bold mb-4 bg-gradient-to-r from-orange-400 to-yellow-400 bg-clip-text text-transparent">
+                    {score}
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 mb-6">
+                    <div className="bg-gray-900/50 rounded p-2">
+                      <div className="text-[10px] text-gray-400">COMBO</div>
+                      <div className="text-lg font-bold text-orange-300">{combo}×</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded p-2">
+                      <div className="text-[10px] text-gray-400">STAGE</div>
+                      <div className={`text-lg font-bold ${
+                        level === 'Easy' ? 'text-green-300' : 
+                        level === 'Medium' ? 'text-yellow-300' : 
+                        'text-red-300'
+                      }`}>{level}</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded p-2">
+                      <div className="text-[10px] text-gray-400">HIGH SCORE</div>
+                      <div className="text-lg font-bold text-yellow-300">{highScore}</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded p-2">
+                      <div className="text-[10px] text-gray-400">MULT</div>
+                      <div className="text-lg font-bold text-green-300">×{multiplier.toFixed(1)}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-2 mb-4">
+                    <button
+                      onClick={restartGame}
+                      className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-2.5 px-3 rounded-xl shadow-lg text-sm"
+                    >
+                      PLAY AGAIN
+                    </button>
+                    <button
+                      onClick={exitToMenu}
+                      className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-2.5 px-3 rounded-xl shadow-lg text-sm"
+                    >
+                      MAIN MENU
+                    </button>
+                  </div>
+                  
+                  <div className="text-[10px] text-gray-500">
+                    {score < 200 ? 'Tip: Always have multiple tiles ready to tap!' :
+                     score < 500 ? 'Tip: Tiles are pre-generated for fast response!' :
+                     'Tip: Perfect timing gives 2x points!'}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -771,7 +853,7 @@ const GameSandbox: FC = () => {
         )}
 
         {/* GAME SCREEN - Active gameplay */}
-        {gameStarted && gameActive && !showAnnouncement && levelStage !== 'transition' && (
+        {gameStarted && gameActive && !showMenu && !showAnnouncement && levelStage !== 'transition' && (
           <>
             {/* Header */}
             <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 to-transparent z-10 p-2 backdrop-blur-sm">
@@ -810,7 +892,7 @@ const GameSandbox: FC = () => {
               </div>
             </div>
 
-            {/* Game columns - NO DIM LIGHT PREVIEW */}
+            {/* Game columns */}
             <div className="flex h-full pt-14">
               {Array.from({ length: columns }).map((_, columnIndex) => (
                 <div
@@ -826,8 +908,6 @@ const GameSandbox: FC = () => {
                 >
                   <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
                   
-                  {/* NO DIM LIGHT PREVIEW - removed the gradient background */}
-                  
                   <div className="absolute top-1 left-1/2 transform -translate-x-1/2 text-[9px] text-gray-500">
                     {columnIndex + 1}
                   </div>
@@ -835,8 +915,8 @@ const GameSandbox: FC = () => {
               ))}
             </div>
 
-            {/* Falling tiles - NO PREVIEW GLOW FOR UPCOMING TILES */}
-            {tiles.map(tile => (
+            {/* Falling tiles - Only show released tiles */}
+            {tiles.filter(tile => tile.released).map(tile => (
               <div
                 key={tile.id}
                 className={`absolute w-12 h-12 transition-all duration-100 rounded-lg ${
@@ -849,7 +929,6 @@ const GameSandbox: FC = () => {
                 }}
               >
                 <div className={`absolute inset-0 rounded-lg ${
-                  // ONLY highlight current tile, no preview for upcoming tiles
                   currentTile?.id === tile.id
                     ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_20px_rgba(255,119,0,0.8)] animate-pulse border-2 border-yellow-400'
                     : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_5px_rgba(255,119,0,0.3)] border border-orange-300/50'
@@ -866,7 +945,7 @@ const GameSandbox: FC = () => {
                   
                   <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/20 to-transparent rounded-t-lg"></div>
                   
-                  {/* ONLY animate current tile - NO preview glow for upcoming tiles */}
+                  {/* ONLY animate current tile */}
                   {currentTile?.id === tile.id && (
                     <>
                       <div className="absolute inset-0 rounded-lg animate-ping bg-gradient-to-b from-orange-400/30 to-transparent"></div>
@@ -895,10 +974,10 @@ const GameSandbox: FC = () => {
             )}
 
             {/* Show next tile order in queue */}
-            {tiles.filter(t => t.order > currentTileOrder).length > 0 && (
+            {tileReleaseQueueRef.current.length > 0 && (
               <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 text-center z-10">
                 <div className="text-[10px] text-gray-400 bg-black/30 px-2 py-1 rounded-full">
-                  Next: #{currentTileOrder + 1}
+                  Next in: {tileReleaseQueueRef.current.length}
                 </div>
               </div>
             )}
@@ -959,71 +1038,6 @@ const GameSandbox: FC = () => {
               </div>
             )}
           </>
-        )}
-
-        {/* GAME OVER SCREEN */}
-        {gameStarted && !gameActive && tiles.length === 0 && !showAnnouncement && (
-          <div className="absolute inset-0 bg-gradient-to-b from-black/95 via-gray-950/95 to-black/95 flex flex-col items-center justify-center z-30 p-3 backdrop-blur-sm">
-            <div className="bg-gradient-to-b from-gray-900/90 to-black/90 rounded-2xl p-3 text-center border border-orange-500/30 w-[250px] shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
-              <div className="text-3xl mb-2">
-                {score >= 1000 ? '🏆' : score >= 500 ? '⭐' : '🎵'}
-              </div>
-              
-              <div className="text-lg font-bold text-white mb-1">
-                {score >= 1000 ? 'RHYTHM MASTER!' : 
-                 score >= 500 ? 'GREAT SCORE!' : 
-                 score >= 200 ? 'GOOD GAME!' : 'GAME OVER'}
-              </div>
-              
-              <div className="text-4xl font-bold mb-2 bg-gradient-to-r from-orange-400 to-yellow-400 bg-clip-text text-transparent">
-                {score}
-              </div>
-              
-              <div className="grid grid-cols-2 gap-1 mb-3">
-                <div className="bg-gray-900/50 rounded p-1">
-                  <div className="text-[9px] text-gray-400">COMBO</div>
-                  <div className="text-sm font-bold text-orange-300">{combo}×</div>
-                </div>
-                <div className="bg-gray-900/50 rounded p-1">
-                  <div className="text-[9px] text-gray-400">STAGE</div>
-                  <div className={`text-sm font-bold ${
-                    level === 'Easy' ? 'text-green-300' : 
-                    level === 'Medium' ? 'text-yellow-300' : 
-                    'text-red-300'
-                  }`}>{level}</div>
-                </div>
-                <div className="bg-gray-900/50 rounded p-1">
-                  <div className="text-[9px] text-gray-400">HIGH SCORE</div>
-                  <div className="text-sm font-bold text-yellow-300">{highScore}</div>
-                </div>
-                <div className="bg-gray-900/50 rounded p-1">
-                  <div className="text-[9px] text-gray-400">MULT</div>
-                  <div className="text-sm font-bold text-green-300">×{multiplier.toFixed(1)}</div>
-                </div>
-              </div>
-              
-              <div className="flex gap-1 mb-2">
-                <button
-                  onClick={restartGame}
-                  className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-2 px-2 rounded-xl shadow-lg text-xs active:scale-95 transition-transform"
-                >
-                  PLAY AGAIN
-                </button>
-                <button
-                  onClick={exitToMenu}
-                  className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-2 px-2 rounded-xl shadow-lg text-xs active:scale-95 transition-transform"
-                >
-                  EXIT
-                </button>
-              </div>
-              
-              <div className="text-[9px] text-gray-500">
-                {score < 200 ? 'Tip: Tap the glowing tile with yellow border!' :
-                 score < 500 ? 'Tip: Fast taps work better on mobile!' :
-                 'Tip: Perfect timing on current tile gives 2x points!'}
-              </div>
-            </div>
-          </div>
         )}
       </div>
     </div>
