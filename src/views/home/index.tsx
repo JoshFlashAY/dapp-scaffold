@@ -68,6 +68,7 @@ const GameSandbox: FC = () => {
     order: number;
     xOffset: number;
     released: boolean;
+    disintegrating?: boolean;
   }>>([]);
   const [showFeedback, setShowFeedback] = useState<{type: 'perfect' | 'good' | 'miss', show: boolean, text: string}>({type: 'good', show: false, text: ''});
   const [highScore, setHighScore] = useState(0);
@@ -86,6 +87,7 @@ const GameSandbox: FC = () => {
   const [isProcessingTap, setIsProcessingTap] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [menuState, setMenuState] = useState<'main' | 'gameOver'>('main');
+  const [activeTapColumn, setActiveTapColumn] = useState<number | null>(null);
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -107,6 +109,9 @@ const GameSandbox: FC = () => {
     order: number;
     releaseTime: number;
   }>>([]);
+  const tileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const tapProcessingQueue = useRef<Array<{columnIndex: number, timestamp: number}>>([]);
+  const isProcessingQueue = useRef(false);
 
   // Initialize audio context
   const initAudio = () => {
@@ -432,7 +437,7 @@ const GameSandbox: FC = () => {
       setTiles(prev => {
         const updatedTiles = prev.map(tile => ({
           ...tile,
-          position: tile.released ? tile.position + tile.speed : tile.position,
+          position: tile.released && !tile.disintegrating ? tile.position + tile.speed : tile.position,
         }));
         
         // Find current tile ID from the order map
@@ -442,7 +447,7 @@ const GameSandbox: FC = () => {
           const currentTile = updatedTiles.find(t => t.id === currentTileId);
           
           // Check if current tile reached bottom without being tapped
-          if (currentTile && currentTile.released && currentTile.position > 100) {
+          if (currentTile && currentTile.released && !currentTile.disintegrating && currentTile.position > 100) {
             // Current tile missed - game over
             playTileSound(150, 'miss');
             setTimeout(() => handleGameOver('Missed tile #' + currentTile.order + '!'), 50);
@@ -450,8 +455,8 @@ const GameSandbox: FC = () => {
           }
         }
         
-        // Remove tiles that are way past the bottom
-        return updatedTiles.filter(tile => tile.position > -40);
+        // Remove tiles that are way past the bottom or have finished disintegrating
+        return updatedTiles.filter(tile => tile.position > -40 && !tile.disintegrating);
       });
 
       setGameTime(prev => prev + 1);
@@ -464,36 +469,65 @@ const GameSandbox: FC = () => {
     };
   }, [gameActive, gameSpeed, gameStarted, levelStage, currentTileOrder]);
 
-  // Handle column tap - FIXED FOR MOBILE RESPONSIVENESS
-  const handleColumnTap = (columnIndex: number) => {
-    if (isProcessingTap) return;
+  // Process tap queue for smooth flow
+  const processTapQueue = async () => {
+    if (isProcessingQueue.current || tapProcessingQueue.current.length === 0) return;
     
+    isProcessingQueue.current = true;
+    
+    while (tapProcessingQueue.current.length > 0) {
+      const tap = tapProcessingQueue.current.shift();
+      if (!tap) continue;
+      
+      await processColumnTap(tap.columnIndex);
+      
+      // Small delay between processing taps for smooth flow
+      if (tapProcessingQueue.current.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    
+    isProcessingQueue.current = false;
+  };
+
+  // Main tap handler - optimized for flow
+  const handleColumnTap = (columnIndex: number) => {
     const now = Date.now();
-    if (now - lastTapRef.current < 100) {  // Changed from 50ms to 100ms for mobile
+    
+    // Minimal debounce for smooth flow
+    if (now - lastTapRef.current < 30) { // Reduced from 100ms to 30ms for better flow
       return;
     }
     
     if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
     
-    setIsProcessingTap(true);
+    // Add to queue for smooth processing
+    tapProcessingQueue.current.push({ columnIndex, timestamp: now });
     lastTapRef.current = now;
     
-    setTouchActive(true);
-    setTimeout(() => setTouchActive(false), 30);
+    // Process queue if not already processing
+    if (!isProcessingQueue.current) {
+      processTapQueue();
+    }
+    
+    // Visual feedback for tap
+    setActiveTapColumn(columnIndex);
+    setTimeout(() => setActiveTapColumn(null), 100);
+  };
 
+  // Process individual tap - optimized for flow
+  const processColumnTap = async (columnIndex: number) => {
     // Get current tile ID from the order map
     const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
     
     if (!currentTileId) {
-      setIsProcessingTap(false);
       return;
     }
 
     // Find the current tile
     const currentTile = tiles.find(tile => tile.id === currentTileId);
 
-    if (!currentTile || !currentTile.released) {
-      setIsProcessingTap(false);
+    if (!currentTile || !currentTile.released || currentTile.disintegrating) {
       return;
     }
 
@@ -537,42 +571,42 @@ const GameSandbox: FC = () => {
       setScore(prev => prev + Math.round(points));
       setCombo(prev => prev + 1);
       
-      // IMMEDIATELY move to next tile
+      // MARK TILE FOR DISINTEGRATION (instead of immediate removal)
+      setTiles(prev => prev.map(tile => 
+        tile.id === currentTileId ? { ...tile, disintegrating: true } : tile
+      ));
+      
+      // IMMEDIATELY move to next tile for continuous flow
       const nextOrder = currentTileOrder + 1;
       setCurrentTileOrder(nextOrder);
       
       setShowFeedback({type: feedback, show: true, text: feedbackText});
-      setLastTapTime(now);
+      setLastTapTime(Date.now());
       
       setTimeout(() => {
         setShowFeedback(prev => ({...prev, show: false}));
       }, 200);
 
-      // Remove the tapped tile IMMEDIATELY
-      setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
-      
-      // Clear from order map
+      // Clear from order map immediately for smooth flow
       tileOrderMapRef.current.delete(currentTileOrder);
       
       // If no more released tiles available, generate more immediately
       const nextTileId = tileOrderMapRef.current.get(nextOrder);
       if (!nextTileId) {
-        generateTileBatch(1);
+        setTimeout(() => {
+          generateTileBatch(1);
+        }, 0);
       }
       
-      // Add a small delay before allowing next tap to prevent double-processing on mobile
+      // Remove tile after disintegration animation (150ms)
       setTimeout(() => {
-        setIsProcessingTap(false);
-      }, 50);
+        setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
+      }, 150);
       
     } else {
       // Tapped wrong column - game over
       playTileSound(100, 'miss');
       handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1));
-      // Add delay before resetting processing state on game over
-      setTimeout(() => {
-        setIsProcessingTap(false);
-      }, 100);
     }
   };
 
@@ -597,6 +631,10 @@ const GameSandbox: FC = () => {
     levelIntervalRef.current = null;
     announcementTimeoutRef.current = null;
     releaseTimeoutRef.current = null;
+    
+    // Clear tap queue
+    tapProcessingQueue.current = [];
+    isProcessingQueue.current = false;
     
     // Show game over menu after a short delay
     setTimeout(() => {
@@ -629,7 +667,8 @@ const GameSandbox: FC = () => {
     tileReleaseQueueRef.current = [];
     startTimeRef.current = Date.now();
     lastTapRef.current = 0;
-    setIsProcessingTap(false);
+    tapProcessingQueue.current = [];
+    isProcessingQueue.current = false;
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     setShowMenu(false);
@@ -658,7 +697,8 @@ const GameSandbox: FC = () => {
     tileReleaseQueueRef.current = [];
     startTimeRef.current = Date.now();
     lastTapRef.current = 0;
-    setIsProcessingTap(false);
+    tapProcessingQueue.current = [];
+    isProcessingQueue.current = false;
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     setShowMenu(false);
@@ -682,6 +722,8 @@ const GameSandbox: FC = () => {
     tileOrderMapRef.current.clear();
     tileReleaseQueueRef.current = [];
     startTimeRef.current = null;
+    tapProcessingQueue.current = [];
+    isProcessingQueue.current = false;
     setShowMenu(true);
     setMenuState('main');
     cleanupAudio();
@@ -716,7 +758,7 @@ const GameSandbox: FC = () => {
 
   // Find the current tile for display
   const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
-  const currentTile = currentTileId ? tiles.find(t => t.id === currentTileId && t.released) : null;
+  const currentTile = currentTileId ? tiles.find(t => t.id === currentTileId && t.released && !t.disintegrating) : null;
 
   // Show main menu initially
   useEffect(() => {
@@ -736,15 +778,57 @@ const GameSandbox: FC = () => {
           -moz-user-select: none;
           -ms-user-select: none;
           user-select: none;
-        }
-        button, [role="button"], .game-column {
           touch-action: manipulation;
+        }
+        
+        .game-column {
+          touch-action: manipulation;
+          -webkit-user-select: none;
+          user-select: none;
+        }
+        
+        .disintegrate {
+          animation: disintegrate 0.15s ease-out forwards;
+        }
+        
+        @keyframes disintegrate {
+          0% {
+            opacity: 1;
+            transform: translateY(-50%) scale(1);
+            filter: brightness(1) blur(0px);
+          }
+          50% {
+            opacity: 0.5;
+            transform: translateY(-50%) scale(0.8);
+            filter: brightness(1.5) blur(2px);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(-50%) scale(0.1);
+            filter: brightness(2) blur(8px);
+          }
+        }
+        
+        .column-tap {
+          animation: columnPulse 0.1s ease-out;
+        }
+        
+        @keyframes columnPulse {
+          0% {
+            background-color: rgba(255, 119, 0, 0);
+          }
+          50% {
+            background-color: rgba(255, 119, 0, 0.2);
+          }
+          100% {
+            background-color: rgba(255, 119, 0, 0);
+          }
         }
       `}</style>
       
       <div 
         ref={gameContainerRef}
-        className="relative w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none mx-auto game-container"
+        className="relative w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none mx-auto"
         style={{ aspectRatio: '9/16' }}
       >
         {/* App-like glass morphism background */}
@@ -912,23 +996,33 @@ const GameSandbox: FC = () => {
               </div>
             </div>
 
-            {/* Game columns */}
+            {/* Game columns with improved touch handling */}
             <div className="flex h-full pt-14">
               {Array.from({ length: columns }).map((_, columnIndex) => (
                 <div
                   key={`column_${columnIndex}`}
                   className={`game-column flex-1 relative ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} ${
-                    touchActive && currentTile?.column === columnIndex ? 'bg-orange-500/5' : ''
+                    activeTapColumn === columnIndex ? 'column-tap' : ''
                   }`}
-                  onMouseDown={() => handleColumnTap(columnIndex)}
-                  onTouchStart={(e) => {
-                    // Prevent default to avoid mouse events on mobile
+                  onClick={(e) => {
                     e.preventDefault();
-                    e.stopPropagation();
                     handleColumnTap(columnIndex);
                   }}
-                  // Prevent context menu on long press
-                  onContextMenu={(e) => e.preventDefault()}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    handleColumnTap(columnIndex);
+                  }}
+                  onTouchEnd={(e) => e.preventDefault()}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseUp={(e) => e.preventDefault()}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    return false;
+                  }}
+                  style={{
+                    WebkitTapHighlightColor: 'transparent',
+                    WebkitTouchCallout: 'none',
+                  }}
                 >
                   <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
                   
@@ -939,49 +1033,62 @@ const GameSandbox: FC = () => {
               ))}
             </div>
 
-            {/* Falling tiles - Only show released tiles */}
+            {/* Falling tiles with disintegration effect */}
             {tiles.filter(tile => tile.released).map(tile => (
               <div
                 key={tile.id}
-                className={`absolute w-12 h-12 transition-all duration-100 rounded-lg ${
-                  'z-10'
-                }`}
+                ref={(el) => {
+                  if (el) tileRefs.current.set(tile.id, el);
+                  else tileRefs.current.delete(tile.id);
+                }}
+                className={`absolute w-12 h-12 transition-all duration-75 rounded-lg ${
+                  tile.disintegrating ? 'disintegrate' : ''
+                } ${currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
                 style={{
                   left: `calc(${(tile.column * 25) + 12.5}% - 24px)`,
                   top: `${tile.position}%`,
                   transform: 'translateY(-50%)',
+                  transition: tile.disintegrating ? 'none' : 'top 0.075s linear',
                 }}
               >
                 <div className={`absolute inset-0 rounded-lg ${
-                  currentTile?.id === tile.id
-                    ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_20px_rgba(255,119,0,0.8)] animate-pulse border-2 border-yellow-400'
+                  currentTile?.id === tile.id && !tile.disintegrating
+                    ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_20px_rgba(255,119,0,0.8)] border-2 border-yellow-400'
                     : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_5px_rgba(255,119,0,0.3)] border border-orange-300/50'
-                }`}>
+                } ${tile.disintegrating ? 'opacity-50 brightness-150' : ''}`}>
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className={`text-sm font-bold ${
-                      currentTile?.id === tile.id 
+                      currentTile?.id === tile.id && !tile.disintegrating
                         ? 'text-white' 
                         : 'text-white/80'
-                    }`}>
+                    } ${tile.disintegrating ? 'text-white/40' : ''}`}>
                       {tile.order}
                     </div>
                   </div>
                   
                   <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/20 to-transparent rounded-t-lg"></div>
                   
-                  {/* ONLY animate current tile */}
-                  {currentTile?.id === tile.id && (
+                  {/* Current tile glow effect */}
+                  {currentTile?.id === tile.id && !tile.disintegrating && (
                     <>
-                      <div className="absolute inset-0 rounded-lg animate-ping bg-gradient-to-b from-orange-400/30 to-transparent"></div>
+                      <div className="absolute inset-0 rounded-lg animate-pulse bg-gradient-to-b from-orange-400/30 to-transparent"></div>
                       <div className="absolute -inset-1 rounded-lg border border-yellow-400/50 animate-pulse"></div>
                     </>
                   )}
                   
                   {/* Tap indicator only for current tile */}
-                  {currentTile?.id === tile.id && tile.position < 60 && (
-                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[9px] text-yellow-300 font-bold whitespace-nowrap bg-black/70 px-1 rounded">
+                  {currentTile?.id === tile.id && !tile.disintegrating && tile.position < 60 && (
+                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[9px] text-yellow-300 font-bold whitespace-nowrap bg-black/70 px-1 rounded animate-pulse">
                       TAP NOW!
                     </div>
+                  )}
+                  
+                  {/* Disintegration particles effect */}
+                  {tile.disintegrating && (
+                    <>
+                      <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-yellow-400/30 to-orange-500/30"></div>
+                      <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-transparent via-white/10 to-transparent animate-ping"></div>
+                    </>
                   )}
                 </div>
               </div>
@@ -989,7 +1096,7 @@ const GameSandbox: FC = () => {
 
             {/* Current tile indicator */}
             {currentTile && gameActive && (
-              <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 text-center z-10">
+              <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 text-center z-30">
                 <div className="bg-gradient-to-r from-gray-900/80 to-black/80 text-orange-300 text-xs px-3 py-1 rounded-full backdrop-blur-sm border border-orange-500/30">
                   CURRENT: <span className="font-bold text-white">Tile #{currentTile.order}</span>
                   <div className="text-[9px] text-orange-400">Column {currentTile.column + 1}</div>
@@ -1008,7 +1115,7 @@ const GameSandbox: FC = () => {
 
             {/* Timing feedback */}
             {showFeedback.show && (
-              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-lg font-bold z-20 ${
+              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-lg font-bold z-40 ${
                 showFeedback.type === 'perfect' 
                   ? 'text-yellow-300 animate-bounce' 
                   : 'text-orange-300 animate-pulse'
@@ -1059,6 +1166,15 @@ const GameSandbox: FC = () => {
             {lastTapTime && Date.now() - lastTapTime < 200 && (
               <div className="absolute top-28 left-1/2 transform -translate-x-1/2 text-xs text-green-400 animate-pulse">
                 ⚡ QUICK!
+              </div>
+            )}
+
+            {/* Flow indicator */}
+            {tapProcessingQueue.current.length > 0 && (
+              <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 text-center z-10">
+                <div className="text-[10px] text-green-400 bg-black/30 px-2 py-1 rounded-full">
+                  FLOW: {tapProcessingQueue.current.length}
+                </div>
               </div>
             )}
           </>
