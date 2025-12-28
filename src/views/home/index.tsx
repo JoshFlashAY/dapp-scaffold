@@ -84,6 +84,7 @@ const GameSandbox: FC = () => {
   const [announcementText, setAnnouncementText] = useState('');
   const [nextTileReady, setNextTileReady] = useState(true);
   const [lastTapTime, setLastTapTime] = useState<number | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -97,9 +98,19 @@ const GameSandbox: FC = () => {
   const audioNodesRef = useRef<Set<AudioNode>>(new Set());
   const backgroundMusicRef = useRef<OscillatorNode | null>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
-  const mobileSwipeStartRef = useRef<number | null>(null);
-  const lastTileTapRef = useRef<number>(0);
-  const quickTapAllowedRef = useRef<boolean>(true);
+  const lastTapRef = useRef<number>(0);
+  const tapProcessedRef = useRef<boolean>(false);
+  const tapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 
+                 ('ontouchstart' in window) || 
+                 (navigator.maxTouchPoints > 0));
+    };
+    checkMobile();
+  }, []);
 
   // Initialize audio context
   const initAudio = () => {
@@ -406,11 +417,6 @@ const GameSandbox: FC = () => {
     }
 
     gameIntervalRef.current = setInterval(() => {
-      const now = Date.now();
-      const timeSinceLastTap = lastTileTapRef.current ? now - lastTileTapRef.current : Infinity;
-      
-      quickTapAllowedRef.current = timeSinceLastTap > 100;
-      
       setTiles(prev => 
         prev
           .map(tile => ({
@@ -430,7 +436,7 @@ const GameSandbox: FC = () => {
       );
 
       setGameTime(prev => prev + 1);
-    }, 12);
+    }, 16);
 
     return () => {
       if (gameIntervalRef.current) {
@@ -439,90 +445,30 @@ const GameSandbox: FC = () => {
     };
   }, [gameActive, gameSpeed, gameStarted, levelStage]);
 
-  // Handle mobile swipe/tap
-  useEffect(() => {
-    const container = gameContainerRef.current;
-    if (!container) return;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      mobileSwipeStartRef.current = e.touches[0].clientX;
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
-      
-      const touchX = e.changedTouches[0].clientX;
-      const startX = mobileSwipeStartRef.current;
-      const containerRect = container.getBoundingClientRect();
-      const containerWidth = containerRect.width;
-      
-      const relativeX = touchX - containerRect.left;
-      const columnWidth = containerWidth / columns;
-      const columnIndex = Math.floor(relativeX / columnWidth);
-      
-      if (columnIndex >= 0 && columnIndex < columns) {
-        handleColumnTap(columnIndex, e as any);
-      }
-      
-      mobileSwipeStartRef.current = null;
-    };
-
-    container.addEventListener('touchstart', handleTouchStart, { passive: true });
-    container.addEventListener('touchend', handleTouchEnd, { passive: true });
-
-    return () => {
-      container.removeEventListener('touchstart', handleTouchStart);
-      container.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [gameActive, gameStarted, columns, levelStage]);
-
-  const handleGameOver = (reason: string) => {
-    if (!gameActive) return;
+  // Handle column tap - SIMPLIFIED FOR MOBILE
+  const handleColumnTap = (columnIndex: number) => {
+    // Prevent multiple taps in quick succession
+    const now = Date.now();
+    if (now - lastTapRef.current < 100) {
+      return;
+    }
+    lastTapRef.current = now;
     
-    stopBackgroundMusic();
-    setGameActive(false);
-    setShowFeedback({type: 'miss', show: true, text: reason});
-    setTimeout(() => setShowFeedback(prev => ({...prev, show: false})), 1000);
-    if (score > highScore) setHighScore(score);
-    
-    if (gameIntervalRef.current) clearInterval(gameIntervalRef.current);
-    if (tileIntervalRef.current) clearInterval(tileIntervalRef.current);
-    if (levelIntervalRef.current) clearInterval(levelIntervalRef.current);
-    if (announcementTimeoutRef.current) clearTimeout(announcementTimeoutRef.current);
-    
-    gameIntervalRef.current = null;
-    tileIntervalRef.current = null;
-    levelIntervalRef.current = null;
-    announcementTimeoutRef.current = null;
-  };
-
-  // Handle column tap
-  const handleColumnTap = (columnIndex: number, e: React.MouseEvent | React.TouchEvent) => {
     if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
     
-    e.stopPropagation();
     setTouchActive(true);
     setTimeout(() => setTouchActive(false), 50);
 
-    const now = Date.now();
-    
-    if (!quickTapAllowedRef.current && now - lastTileTapRef.current < 100) {
-      return;
-    }
-    
-    lastTileTapRef.current = now;
-    setLastTapTime(now);
-
+    // Find the current tile
     const currentTile = tiles
       .filter(tile => tile.active && !tile.tapped)
       .sort((a, b) => a.order - b.order)[0];
 
     if (!currentTile) {
-      playTileSound(120, 'miss');
-      handleGameOver('No tile to tap!');
-      return;
+      return; // Just return, don't end game
     }
 
+    // Check if tapped column has the current tile
     if (currentTile.column === columnIndex) {
       const positionScore = Math.max(20, Math.round(100 - currentTile.position * 0.6));
       const basePoints = positionScore;
@@ -563,11 +509,13 @@ const GameSandbox: FC = () => {
       setCombo(prev => prev + 1);
       setCurrentTileOrder(currentTile.order + 1);
       setShowFeedback({type: feedback, show: true, text: feedbackText});
+      setLastTapTime(now);
       
       setTimeout(() => {
         setShowFeedback(prev => ({...prev, show: false}));
       }, 300);
 
+      // Mark tile as tapped
       setTiles(prev => {
         const newTiles = prev.filter(t => t.id !== currentTile.id);
         
@@ -581,9 +529,30 @@ const GameSandbox: FC = () => {
       setNextTileReady(true);
       
     } else {
+      // Wrong column - game over
       playTileSound(100, 'miss');
       handleGameOver('Wrong column!');
     }
+  };
+
+  const handleGameOver = (reason: string) => {
+    if (!gameActive) return;
+    
+    stopBackgroundMusic();
+    setGameActive(false);
+    setShowFeedback({type: 'miss', show: true, text: reason});
+    setTimeout(() => setShowFeedback(prev => ({...prev, show: false})), 1000);
+    if (score > highScore) setHighScore(score);
+    
+    if (gameIntervalRef.current) clearInterval(gameIntervalRef.current);
+    if (tileIntervalRef.current) clearInterval(tileIntervalRef.current);
+    if (levelIntervalRef.current) clearInterval(levelIntervalRef.current);
+    if (announcementTimeoutRef.current) clearTimeout(announcementTimeoutRef.current);
+    
+    gameIntervalRef.current = null;
+    tileIntervalRef.current = null;
+    levelIntervalRef.current = null;
+    announcementTimeoutRef.current = null;
   };
 
   const startGame = () => {
@@ -608,8 +577,7 @@ const GameSandbox: FC = () => {
     tileCounter.current = 0;
     activeTileRef.current.clear();
     startTimeRef.current = Date.now();
-    lastTileTapRef.current = 0;
-    quickTapAllowedRef.current = true;
+    lastTapRef.current = 0;
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
   };
@@ -636,8 +604,7 @@ const GameSandbox: FC = () => {
     tileCounter.current = 0;
     activeTileRef.current.clear();
     startTimeRef.current = Date.now();
-    lastTileTapRef.current = 0;
-    quickTapAllowedRef.current = true;
+    lastTapRef.current = 0;
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     
@@ -692,14 +659,13 @@ const GameSandbox: FC = () => {
     .filter(tile => tile.active && !tile.tapped)
     .sort((a, b) => a.order - b.order)[0];
 
-  // Generate start tile when game is ready - CENTERED VERSION
+  // Generate start tile when game is ready
   useEffect(() => {
     if (!gameStarted && tiles.length === 0 && !showAnnouncement) {
-      // Always place START tile in column 2 (center) at position 50% (middle)
       const startTile = {
         id: 'start_tile',
-        column: 1, // Always column 2 (0-indexed) for center
-        position: 50, // Center vertically
+        column: 1, // Center column
+        position: 50, // Center position
         active: true,
         speed: 0,
         tapped: false,
@@ -738,7 +704,7 @@ const GameSandbox: FC = () => {
                 e.preventDefault();
                 startGame();
               }}
-              className="relative w-32 h-32 bg-gradient-to-br from-green-500 via-green-400 to-emerald-600 rounded-2xl shadow-[0_0_40px_rgba(72,187,120,0.8)] animate-pulse border-4 border-emerald-300 flex flex-col items-center justify-center cursor-pointer touch-auto z-30"
+              className="relative w-32 h-32 bg-gradient-to-br from-green-500 via-green-400 to-emerald-600 rounded-2xl shadow-[0_0_40px_rgba(72,187,120,0.8)] animate-pulse border-4 border-emerald-300 flex flex-col items-center justify-center cursor-pointer touch-auto z-30 active:scale-95 transition-transform"
             >
               <div className="absolute inset-0 rounded-2xl overflow-hidden">
                 <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/40 to-transparent rounded-t-2xl"></div>
@@ -830,18 +796,16 @@ const GameSandbox: FC = () => {
               </div>
             </div>
 
-            {/* Game columns */}
-            <div className="flex h-full pt-14 touch-none">
+            {/* Game columns - SIMPLIFIED TOUCH HANDLING */}
+            <div className="flex h-full pt-14">
               {Array.from({ length: columns }).map((_, columnIndex) => (
-                <button
+                <div
                   key={`column_${columnIndex}`}
-                  className={`flex-1 relative transition-all duration-50 touch-none ${
-                    touchActive && currentTile?.column === columnIndex ? 'bg-orange-500/10' : 'bg-transparent'
-                  } ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} active:bg-orange-500/20`}
-                  onClick={(e) => handleColumnTap(columnIndex, e)}
+                  className={`flex-1 relative ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''}`}
+                  onClick={() => handleColumnTap(columnIndex)}
                   onTouchStart={(e) => {
                     e.preventDefault();
-                    handleColumnTap(columnIndex, e);
+                    handleColumnTap(columnIndex);
                   }}
                 >
                   <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
@@ -853,7 +817,7 @@ const GameSandbox: FC = () => {
                   <div className="absolute top-1 left-1/2 transform -translate-x-1/2 text-[9px] text-gray-500">
                     {columnIndex + 1}
                   </div>
-                </button>
+                </div>
               ))}
             </div>
 
@@ -861,7 +825,7 @@ const GameSandbox: FC = () => {
             {tiles.map(tile => (
               <div
                 key={tile.id}
-                className={`absolute touch-none w-12 h-12 transition-all duration-75 rounded-lg ${
+                className={`absolute w-12 h-12 transition-all duration-75 rounded-lg ${
                   tile.tapped ? 'opacity-0 scale-0' : 'opacity-100'
                 } ${tile.active && !tile.tapped && currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
                 style={{
@@ -907,7 +871,7 @@ const GameSandbox: FC = () => {
 
             {/* Current tile indicator */}
             {currentTile && gameActive && (
-              <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 text-center z-10 touch-none">
+              <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 text-center z-10">
                 <div className="bg-gradient-to-r from-gray-900/80 to-black/80 text-orange-300 text-xs px-3 py-1 rounded-full backdrop-blur-sm border border-orange-500/30">
                   TAP: <span className="font-bold text-white">Column {currentTile.column + 1}</span>
                   <div className="text-[9px] text-orange-400">#{currentTile.order}</div>
@@ -917,7 +881,7 @@ const GameSandbox: FC = () => {
 
             {/* Timing feedback */}
             {showFeedback.show && (
-              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-lg font-bold z-20 touch-none ${
+              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-lg font-bold z-20 ${
                 showFeedback.type === 'perfect' 
                   ? 'text-yellow-300 animate-bounce' 
                   : 'text-orange-300 animate-pulse'
@@ -933,13 +897,13 @@ const GameSandbox: FC = () => {
 
             {/* High streak notification */}
             {streak >= 3 && streak % 3 === 0 && (
-              <div className="absolute top-32 left-1/2 transform -translate-x-1/2 text-sm font-bold text-yellow-300 animate-bounce z-10 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 px-2 py-1 rounded-full backdrop-blur-sm touch-none">
+              <div className="absolute top-32 left-1/2 transform -translate-x-1/2 text-sm font-bold text-yellow-300 animate-bounce z-10 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 px-2 py-1 rounded-full backdrop-blur-sm">
                 ✨ {streak} STREAK! ×{multiplier.toFixed(1)}
               </div>
             )}
 
             {/* Level progress */}
-            <div className="absolute bottom-20 left-0 right-0 text-center z-10 touch-none">
+            <div className="absolute bottom-20 left-0 right-0 text-center z-10">
               <div className={`inline-block ${
                 level === 'Easy' ? 'bg-green-500/20 text-green-300' : 
                 level === 'Medium' ? 'bg-yellow-500/20 text-yellow-300' : 
@@ -1017,13 +981,13 @@ const GameSandbox: FC = () => {
               <div className="flex gap-1 mb-2">
                 <button
                   onClick={restartGame}
-                  className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-2 px-2 rounded-xl shadow-lg text-xs"
+                  className="flex-1 bg-gradient-to-r from-orange-500 to-yellow-500 text-white font-bold py-2 px-2 rounded-xl shadow-lg text-xs active:scale-95 transition-transform"
                 >
                   PLAY AGAIN
                 </button>
                 <button
                   onClick={exitToMenu}
-                  className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-2 px-2 rounded-xl shadow-lg text-xs"
+                  className="flex-1 bg-gradient-to-r from-gray-800 to-gray-900 text-white font-bold py-2 px-2 rounded-xl shadow-lg text-xs active:scale-95 transition-transform"
                 >
                   EXIT
                 </button>
