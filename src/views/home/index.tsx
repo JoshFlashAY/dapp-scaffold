@@ -52,6 +52,7 @@ export const HomeView: FC = () => {
 // Replace this entire GameSandbox component with the one AI generates.
 // Keep the name `GameSandbox` and the `FC` type.
 
+
 const GameSandbox: FC = () => {
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
@@ -69,6 +70,7 @@ const GameSandbox: FC = () => {
     xOffset: number;
     released: boolean;
     disintegrating?: boolean;
+    particles?: Array<{x: number, y: number, color: string}>;
   }>>([]);
   const [showFeedback, setShowFeedback] = useState<{type: 'perfect' | 'good' | 'miss', show: boolean, text: string}>({type: 'good', show: false, text: ''});
   const [highScore, setHighScore] = useState(0);
@@ -88,6 +90,20 @@ const GameSandbox: FC = () => {
   const [showMenu, setShowMenu] = useState(false);
   const [menuState, setMenuState] = useState<'main' | 'gameOver'>('main');
   const [activeTapColumn, setActiveTapColumn] = useState<number | null>(null);
+  const [particleEffects, setParticleEffects] = useState<Array<{
+    id: string;
+    column: number;
+    particles: Array<{
+      id: number;
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      color: string;
+      size: number;
+      life: number;
+    }>;
+  }>>([]);
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -112,6 +128,8 @@ const GameSandbox: FC = () => {
   const tileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const tapProcessingQueue = useRef<Array<{columnIndex: number, timestamp: number}>>([]);
   const isProcessingQueue = useRef(false);
+  const particleIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioBuffersRef = useRef<Map<string, AudioBuffer>>(new Map());
 
   // Initialize audio context
   const initAudio = () => {
@@ -121,46 +139,92 @@ const GameSandbox: FC = () => {
     return audioContextRef.current;
   };
 
+  // Load background music
+  const loadBackgroundMusic = async () => {
+    try {
+      // Electronic beat - using Web Audio API to generate a simple electronic track
+      const ctx = initAudio();
+      
+      // Create multiple oscillators for a richer sound
+      const bassOsc = ctx.createOscillator();
+      const leadOsc = ctx.createOscillator();
+      const hihatOsc = ctx.createOscillator();
+      
+      const bassGain = ctx.createGain();
+      const leadGain = ctx.createGain();
+      const hihatGain = ctx.createGain();
+      
+      bassOsc.connect(bassGain);
+      leadOsc.connect(leadGain);
+      hihatOsc.connect(hihatGain);
+      
+      bassGain.connect(ctx.destination);
+      leadGain.connect(ctx.destination);
+      hihatGain.connect(ctx.destination);
+      
+      bassOsc.type = 'sawtooth';
+      leadOsc.type = 'square';
+      hihatOsc.type = 'triangle';
+      
+      bassGain.gain.value = 0.05;
+      leadGain.gain.value = 0.03;
+      hihatGain.gain.value = 0.02;
+      
+      // Simple electronic beat pattern
+      const bassNotes = [110, 110, 165, 165, 130, 130, 196];
+      const leadNotes = [440, 523, 659, 523, 440, 392, 440];
+      
+      let beat = 0;
+      
+      const playBeat = () => {
+        const now = ctx.currentTime;
+        
+        // Bass on every beat
+        bassOsc.frequency.setValueAtTime(bassNotes[beat % bassNotes.length], now);
+        bassGain.gain.setValueAtTime(0.05, now);
+        bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        
+        // Lead on every other beat
+        if (beat % 2 === 0) {
+          leadOsc.frequency.setValueAtTime(leadNotes[beat % leadNotes.length], now);
+          leadGain.gain.setValueAtTime(0.03, now);
+          leadGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        }
+        
+        // Hi-hat on off-beats
+        if (beat % 1 === 0.5) {
+          hihatOsc.frequency.setValueAtTime(1500, now);
+          hihatGain.gain.setValueAtTime(0.02, now);
+          hihatGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+        }
+        
+        beat++;
+      };
+      
+      bassOsc.start();
+      leadOsc.start();
+      hihatOsc.start();
+      
+      const beatInterval = setInterval(playBeat, 250); // 120 BPM
+      
+      backgroundMusicRef.current = bassOsc;
+      
+      return () => {
+        clearInterval(beatInterval);
+        bassOsc.stop();
+        leadOsc.stop();
+        hihatOsc.stop();
+      };
+    } catch (error) {
+      console.log("Background music error:", error);
+    }
+  };
+
   // Start background music
   const startBackgroundMusic = () => {
     if (!musicPlaying) {
-      const ctx = initAudio();
-      
-      try {
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        let currentNote = 0;
-        const melody = [440, 493.88, 523.25, 587.33, 659.25, 587.33, 523.25, 493.88];
-        
-        oscillator.type = 'sine';
-        gainNode.gain.value = 0.08;
-        
-        backgroundMusicRef.current = oscillator;
-        
-        const playMelody = () => {
-          if (musicPlaying && backgroundMusicRef.current) {
-            oscillator.frequency.setValueAtTime(melody[currentNote], ctx.currentTime);
-            currentNote = (currentNote + 1) % melody.length;
-          }
-        };
-        
-        oscillator.start();
-        
-        const melodyInterval = setInterval(playMelody, 500);
-        
-        setMusicPlaying(true);
-        
-        return () => {
-          clearInterval(melodyInterval);
-          oscillator.stop();
-        };
-      } catch (error) {
-        console.log("Background music error:", error);
-      }
+      loadBackgroundMusic();
+      setMusicPlaying(true);
     }
   };
 
@@ -176,7 +240,7 @@ const GameSandbox: FC = () => {
   };
 
   // Play sound for tile tap
-  const playTileSound = (frequency: number, type: 'hit' | 'perfect' | 'miss' | 'transition') => {
+  const playTileSound = (frequency: number, type: 'hit' | 'perfect' | 'miss' | 'transition' | 'break') => {
     const ctx = initAudio();
     
     try {
@@ -217,14 +281,123 @@ const GameSandbox: FC = () => {
           oscillator.start();
           oscillator.stop(ctx.currentTime + 0.5);
           break;
+        case 'break':
+          // Breaking glass sound
+          const glassOsc = ctx.createOscillator();
+          const glassGain = ctx.createGain();
+          
+          glassOsc.connect(glassGain);
+          glassGain.connect(ctx.destination);
+          
+          glassOsc.frequency.setValueAtTime(1200, ctx.currentTime);
+          glassOsc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.3);
+          
+          glassOsc.type = 'sine';
+          glassGain.gain.setValueAtTime(0.2, ctx.currentTime);
+          glassGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          
+          glassOsc.start();
+          glassOsc.stop(ctx.currentTime + 0.3);
+          
+          // Add a second oscillator for richer sound
+          const glassOsc2 = ctx.createOscillator();
+          const glassGain2 = ctx.createGain();
+          
+          glassOsc2.connect(glassGain2);
+          glassGain2.connect(ctx.destination);
+          
+          glassOsc2.frequency.setValueAtTime(800, ctx.currentTime);
+          glassOsc2.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.4);
+          
+          glassOsc2.type = 'square';
+          glassGain2.gain.setValueAtTime(0.15, ctx.currentTime);
+          glassGain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          
+          glassOsc2.start();
+          glassOsc2.stop(ctx.currentTime + 0.4);
+          break;
       }
       
-      audioNodesRef.current.add(oscillator);
-      oscillator.onended = () => audioNodesRef.current.delete(oscillator);
+      if (type !== 'break') {
+        audioNodesRef.current.add(oscillator);
+        oscillator.onended = () => audioNodesRef.current.delete(oscillator);
+      }
     } catch (error) {
       console.log("Audio error:", error);
     }
   };
+
+  // Create particle explosion effect
+  const createParticleExplosion = (tileId: string, column: number, position: number) => {
+    const particles = [];
+    const particleCount = 12;
+    const colors = [
+      '#FF9900', '#FF6600', '#FF3300', '#FFCC00', 
+      '#FF9933', '#FF6633', '#FF9966', '#FFCC33'
+    ];
+    
+    for (let i = 0; i < particleCount; i++) {
+      const angle = (Math.PI * 2 * i) / particleCount;
+      const speed = 2 + Math.random() * 4;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed;
+      
+      particles.push({
+        id: i,
+        x: 0,
+        y: 0,
+        vx: vx + (Math.random() - 0.5) * 2,
+        vy: vy + (Math.random() - 0.5) * 2,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        size: 4 + Math.random() * 8,
+        life: 1.0
+      });
+    }
+    
+    const particleEffect = {
+      id: `particles_${tileId}_${Date.now()}`,
+      column: column,
+      particles: particles
+    };
+    
+    setParticleEffects(prev => [...prev, particleEffect]);
+    
+    // Remove particle effect after animation
+    setTimeout(() => {
+      setParticleEffects(prev => prev.filter(p => p.id !== particleEffect.id));
+    }, 1000);
+  };
+
+  // Update particles animation
+  useEffect(() => {
+    if (particleEffects.length === 0) return;
+    
+    if (particleIntervalRef.current) {
+      clearInterval(particleIntervalRef.current);
+    }
+    
+    particleIntervalRef.current = setInterval(() => {
+      setParticleEffects(prev => 
+        prev.map(effect => ({
+          ...effect,
+          particles: effect.particles.map(p => ({
+            ...p,
+            x: p.x + p.vx,
+            y: p.y + p.vy,
+            vy: p.vy + 0.1, // Gravity
+            life: p.life - 0.02,
+            size: p.size * 0.98
+          })).filter(p => p.life > 0)
+        })).filter(effect => effect.particles.length > 0)
+      );
+    }, 16);
+    
+    return () => {
+      if (particleIntervalRef.current) {
+        clearInterval(particleIntervalRef.current);
+      }
+    };
+  }, [particleEffects.length]);
 
   // Clean up audio nodes
   const cleanupAudio = () => {
@@ -351,7 +524,7 @@ const GameSandbox: FC = () => {
     for (let i = 0; i < count; i++) {
       const order = tileCounter.current + 1;
       const orangeColumn = Math.floor(Math.random() * columns);
-      const baseSpeed = (level === 'Easy' ? 0.8 : level === 'Medium' ? 1.2 : 1.8) * gameSpeed;
+      const baseSpeed = (level === 'Easy' ? 0.8 : level === 'Medium' ? 1.2 : level === 'Hard' ? 1.8 : 1.0) * gameSpeed;
       
       const newTile = {
         id: generateId(),
@@ -481,9 +654,9 @@ const GameSandbox: FC = () => {
       
       await processColumnTap(tap.columnIndex);
       
-      // Small delay between processing taps for smooth flow
+      // Very small delay for ultra-smooth flow
       if (tapProcessingQueue.current.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise(resolve => setTimeout(resolve, 5));
       }
     }
     
@@ -495,7 +668,7 @@ const GameSandbox: FC = () => {
     const now = Date.now();
     
     // Minimal debounce for smooth flow
-    if (now - lastTapRef.current < 30) { // Reduced from 100ms to 30ms for better flow
+    if (now - lastTapRef.current < 20) { // Reduced to 20ms for ultra-smooth flow
       return;
     }
     
@@ -544,6 +717,7 @@ const GameSandbox: FC = () => {
         feedback = 'perfect';
         feedbackText = 'PERFECT!';
         playTileSound(1000 + Math.random() * 300, 'perfect');
+        playTileSound(800, 'break'); // Additional break sound for perfect
         setStreak(prev => {
           const newStreak = prev + 1;
           if (newStreak % 3 === 0) {
@@ -556,12 +730,14 @@ const GameSandbox: FC = () => {
         feedback = 'good';
         feedbackText = 'GREAT!';
         playTileSound(700 + Math.random() * 200, 'hit');
+        playTileSound(600, 'break'); // Break sound for great
         setStreak(prev => prev + 1);
       } else {
         points = basePoints * multiplier * 0.8;
         feedback = 'good';
         feedbackText = 'GOOD!';
         playTileSound(500 + Math.random() * 150, 'hit');
+        playTileSound(400, 'break'); // Break sound for good
         setStreak(prev => Math.max(1, prev + 0.5));
       }
 
@@ -571,7 +747,13 @@ const GameSandbox: FC = () => {
       setScore(prev => prev + Math.round(points));
       setCombo(prev => prev + 1);
       
-      // MARK TILE FOR DISINTEGRATION (instead of immediate removal)
+      // Create particle explosion effect
+      createParticleExplosion(currentTileId, currentTile.column, currentTile.position);
+      
+      // Play breaking sound
+      playTileSound(300, 'break');
+      
+      // MARK TILE FOR DISINTEGRATION
       setTiles(prev => prev.map(tile => 
         tile.id === currentTileId ? { ...tile, disintegrating: true } : tile
       ));
@@ -598,10 +780,10 @@ const GameSandbox: FC = () => {
         }, 0);
       }
       
-      // Remove tile after disintegration animation (150ms)
+      // Remove tile after disintegration animation
       setTimeout(() => {
         setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
-      }, 150);
+      }, 300);
       
     } else {
       // Tapped wrong column - game over
@@ -625,16 +807,21 @@ const GameSandbox: FC = () => {
     if (levelIntervalRef.current) clearInterval(levelIntervalRef.current);
     if (announcementTimeoutRef.current) clearTimeout(announcementTimeoutRef.current);
     if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
+    if (particleIntervalRef.current) clearInterval(particleIntervalRef.current);
     
     gameIntervalRef.current = null;
     tileIntervalRef.current = null;
     levelIntervalRef.current = null;
     announcementTimeoutRef.current = null;
     releaseTimeoutRef.current = null;
+    particleIntervalRef.current = null;
     
     // Clear tap queue
     tapProcessingQueue.current = [];
     isProcessingQueue.current = false;
+    
+    // Clear particles
+    setParticleEffects([]);
     
     // Show game over menu after a short delay
     setTimeout(() => {
@@ -669,6 +856,7 @@ const GameSandbox: FC = () => {
     lastTapRef.current = 0;
     tapProcessingQueue.current = [];
     isProcessingQueue.current = false;
+    setParticleEffects([]);
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     setShowMenu(false);
@@ -699,6 +887,7 @@ const GameSandbox: FC = () => {
     lastTapRef.current = 0;
     tapProcessingQueue.current = [];
     isProcessingQueue.current = false;
+    setParticleEffects([]);
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     setShowMenu(false);
@@ -724,6 +913,7 @@ const GameSandbox: FC = () => {
     startTimeRef.current = null;
     tapProcessingQueue.current = [];
     isProcessingQueue.current = false;
+    setParticleEffects([]);
     setShowMenu(true);
     setMenuState('main');
     cleanupAudio();
@@ -733,12 +923,14 @@ const GameSandbox: FC = () => {
     if (levelIntervalRef.current) clearInterval(levelIntervalRef.current);
     if (announcementTimeoutRef.current) clearTimeout(announcementTimeoutRef.current);
     if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
+    if (particleIntervalRef.current) clearInterval(particleIntervalRef.current);
     
     gameIntervalRef.current = null;
     tileIntervalRef.current = null;
     levelIntervalRef.current = null;
     announcementTimeoutRef.current = null;
     releaseTimeoutRef.current = null;
+    particleIntervalRef.current = null;
   };
 
   // Faster multiplier progression
@@ -788,24 +980,29 @@ const GameSandbox: FC = () => {
         }
         
         .disintegrate {
-          animation: disintegrate 0.15s ease-out forwards;
+          animation: shatter 0.3s ease-out forwards;
         }
         
-        @keyframes disintegrate {
+        @keyframes shatter {
           0% {
             opacity: 1;
-            transform: translateY(-50%) scale(1);
+            transform: translateY(-50%) scale(1) rotate(0deg);
             filter: brightness(1) blur(0px);
           }
+          20% {
+            opacity: 0.9;
+            transform: translateY(-50%) scale(1.1) rotate(5deg);
+            filter: brightness(1.5) blur(0px);
+          }
           50% {
-            opacity: 0.5;
-            transform: translateY(-50%) scale(0.8);
-            filter: brightness(1.5) blur(2px);
+            opacity: 0.7;
+            transform: translateY(-50%) scale(0.8) rotate(-10deg);
+            filter: brightness(2) blur(2px);
           }
           100% {
             opacity: 0;
-            transform: translateY(-50%) scale(0.1);
-            filter: brightness(2) blur(8px);
+            transform: translateY(-50%) scale(0.1) rotate(45deg);
+            filter: brightness(3) blur(10px);
           }
         }
         
@@ -818,11 +1015,29 @@ const GameSandbox: FC = () => {
             background-color: rgba(255, 119, 0, 0);
           }
           50% {
-            background-color: rgba(255, 119, 0, 0.2);
+            background-color: rgba(255, 119, 0, 0.3);
           }
           100% {
             background-color: rgba(255, 119, 0, 0);
           }
+        }
+        
+        .particle {
+          position: absolute;
+          pointer-events: none;
+          border-radius: 50%;
+          opacity: 0.8;
+          mix-blend-mode: screen;
+          box-shadow: 0 0 10px currentColor;
+        }
+        
+        .glow-particle {
+          position: absolute;
+          pointer-events: none;
+          border-radius: 50%;
+          background: radial-gradient(circle at center, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0) 70%);
+          opacity: 0.6;
+          filter: blur(2px);
         }
       `}</style>
       
@@ -1033,7 +1248,42 @@ const GameSandbox: FC = () => {
               ))}
             </div>
 
-            {/* Falling tiles with disintegration effect */}
+            {/* Particle effects */}
+            {particleEffects.map((effect) => (
+              <div key={effect.id} className="absolute inset-0 pointer-events-none z-30">
+                {effect.particles.map((particle) => (
+                  <div
+                    key={`${effect.id}_${particle.id}`}
+                    className="particle"
+                    style={{
+                      left: `calc(${(effect.column * 25) + 12.5}% + ${particle.x}px)`,
+                      top: `calc(${particle.y}px + 50%)`,
+                      width: `${particle.size}px`,
+                      height: `${particle.size}px`,
+                      backgroundColor: particle.color,
+                      opacity: particle.life * 0.8,
+                      transform: `translate(-50%, -50%) scale(${particle.life})`,
+                    }}
+                  />
+                ))}
+                {effect.particles.map((particle, index) => (
+                  <div
+                    key={`${effect.id}_glow_${particle.id}`}
+                    className="glow-particle"
+                    style={{
+                      left: `calc(${(effect.column * 25) + 12.5}% + ${particle.x}px)`,
+                      top: `calc(${particle.y}px + 50%)`,
+                      width: `${particle.size * 2}px`,
+                      height: `${particle.size * 2}px`,
+                      opacity: particle.life * 0.3,
+                      transform: `translate(-50%, -50%)`,
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
+
+            {/* Falling tiles with enhanced disintegration effect */}
             {tiles.filter(tile => tile.released).map(tile => (
               <div
                 key={tile.id}
@@ -1041,7 +1291,7 @@ const GameSandbox: FC = () => {
                   if (el) tileRefs.current.set(tile.id, el);
                   else tileRefs.current.delete(tile.id);
                 }}
-                className={`absolute w-12 h-12 transition-all duration-75 rounded-lg ${
+                className={`absolute w-12 h-12 rounded-lg transition-all duration-75 ${
                   tile.disintegrating ? 'disintegrate' : ''
                 } ${currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
                 style={{
@@ -1051,17 +1301,27 @@ const GameSandbox: FC = () => {
                   transition: tile.disintegrating ? 'none' : 'top 0.075s linear',
                 }}
               >
-                <div className={`absolute inset-0 rounded-lg ${
+                <div className={`absolute inset-0 rounded-lg overflow-hidden ${
                   currentTile?.id === tile.id && !tile.disintegrating
                     ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_20px_rgba(255,119,0,0.8)] border-2 border-yellow-400'
                     : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_5px_rgba(255,119,0,0.3)] border border-orange-300/50'
-                } ${tile.disintegrating ? 'opacity-50 brightness-150' : ''}`}>
+                } ${tile.disintegrating ? 'brightness-150' : ''}`}>
+                  {/* Crack lines when disintegrating */}
+                  {tile.disintegrating && (
+                    <>
+                      <div className="absolute inset-0 bg-gradient-to-br from-transparent via-white/20 to-transparent"></div>
+                      <div className="absolute top-1/2 left-0 right-0 h-px bg-white/40 transform -translate-y-1/2"></div>
+                      <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/40 transform -translate-x-1/2"></div>
+                      <div className="absolute top-0 left-0 right-0 bottom-0 border-2 border-white/30 rounded-lg"></div>
+                    </>
+                  )}
+                  
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className={`text-sm font-bold ${
                       currentTile?.id === tile.id && !tile.disintegrating
                         ? 'text-white' 
                         : 'text-white/80'
-                    } ${tile.disintegrating ? 'text-white/40' : ''}`}>
+                    } ${tile.disintegrating ? 'text-white/20' : ''}`}>
                       {tile.order}
                     </div>
                   </div>
@@ -1081,14 +1341,6 @@ const GameSandbox: FC = () => {
                     <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[9px] text-yellow-300 font-bold whitespace-nowrap bg-black/70 px-1 rounded animate-pulse">
                       TAP NOW!
                     </div>
-                  )}
-                  
-                  {/* Disintegration particles effect */}
-                  {tile.disintegrating && (
-                    <>
-                      <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-yellow-400/30 to-orange-500/30"></div>
-                      <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-transparent via-white/10 to-transparent animate-ping"></div>
-                    </>
                   )}
                 </div>
               </div>
@@ -1157,7 +1409,7 @@ const GameSandbox: FC = () => {
             <div className="absolute top-16 right-2 bg-black/30 rounded-full p-1 z-10">
               <div className="text-[9px] text-gray-400">
                 <span className={musicPlaying ? 'text-green-400' : 'text-red-400'}>
-                  {musicPlaying ? '🔊' : '🔈'}
+                  {musicPlaying ? '🎵' : '🔈'}
                 </span>
               </div>
             </div>
@@ -1174,6 +1426,15 @@ const GameSandbox: FC = () => {
               <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 text-center z-10">
                 <div className="text-[10px] text-green-400 bg-black/30 px-2 py-1 rounded-full">
                   FLOW: {tapProcessingQueue.current.length}
+                </div>
+              </div>
+            )}
+
+            {/* Particle count indicator */}
+            {particleEffects.length > 0 && (
+              <div className="absolute bottom-40 left-1/2 transform -translate-x-1/2 text-center z-10">
+                <div className="text-[10px] text-orange-400 bg-black/30 px-2 py-1 rounded-full">
+                  PARTICLES: {particleEffects.reduce((sum, effect) => sum + effect.particles.length, 0)}
                 </div>
               </div>
             )}
