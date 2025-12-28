@@ -82,16 +82,13 @@ const GameSandbox: FC = () => {
   const [stageTimer, setStageTimer] = useState(45);
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [announcementText, setAnnouncementText] = useState('');
-  const [nextTileReady, setNextTileReady] = useState(true);
   const [lastTapTime, setLastTapTime] = useState<number | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const tileIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const levelIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const announcementTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const activeTileRef = useRef<Set<string>>(new Set());
   const scoreUpdateRef = useRef(score);
   const startTimeRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -99,18 +96,6 @@ const GameSandbox: FC = () => {
   const backgroundMusicRef = useRef<OscillatorNode | null>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
-  const tapProcessedRef = useRef<boolean>(false);
-  const tapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Detect mobile
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 
-                 ('ontouchstart' in window) || 
-                 (navigator.maxTouchPoints > 0));
-    };
-    checkMobile();
-  }, []);
 
   // Initialize audio context
   const initAudio = () => {
@@ -342,7 +327,7 @@ const GameSandbox: FC = () => {
     return `tile_${tileCounter.current}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   };
 
-  // Generate tiles based on current level
+  // Generate tiles based on current level - CONTINUOUSLY GENERATE TILES
   useEffect(() => {
     if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
     
@@ -350,12 +335,13 @@ const GameSandbox: FC = () => {
       if (!gameActive || !gameStarted) return;
       
       const orangeColumn = Math.floor(Math.random() * columns);
-      const baseSpeed = 1.5 * gameSpeed;
+      // Slower speeds for more visual fun
+      const baseSpeed = (level === 'Easy' ? 0.8 : level === 'Medium' ? 1.2 : 1.8) * gameSpeed;
       
       const newTile = {
         id: generateId(),
         column: orangeColumn,
-        position: -30,
+        position: -20, // Start higher so we see more tiles
         active: true,
         speed: baseSpeed,
         tapped: false,
@@ -365,39 +351,38 @@ const GameSandbox: FC = () => {
       
       setTiles(prev => {
         const newTiles = [...prev, newTile];
-        const maxTotalTiles = level === 'Easy' ? 10 : level === 'Medium' ? 15 : 20;
+        // Allow more tiles on screen at once for visual fun
+        const maxTotalTiles = level === 'Easy' ? 8 : level === 'Medium' ? 12 : 16;
         if (newTiles.length > maxTotalTiles) {
           return newTiles.slice(-maxTotalTiles);
         }
         return newTiles;
       });
-      
-      setNextTileReady(true);
     };
 
     if (tileIntervalRef.current) {
       clearInterval(tileIntervalRef.current);
     }
 
+    // FASTER tile generation so we see more tiles
     let tileInterval;
     switch (level) {
       case 'Easy':
-        tileInterval = 800;
+        tileInterval = 1000; // 1 second between tiles
         break;
       case 'Medium':
-        tileInterval = 500;
+        tileInterval = 700;  // 0.7 seconds between tiles
         break;
       case 'Hard':
-        tileInterval = 300;
+        tileInterval = 500;  // 0.5 seconds between tiles
         break;
       default:
         tileInterval = 1000;
     }
 
     tileIntervalRef.current = setInterval(() => {
-      if (gameActive && gameStarted && nextTileReady) {
+      if (gameActive && gameStarted) {
         generateTile();
-        setNextTileReady(false);
       }
     }, tileInterval / gameSpeed);
 
@@ -406,9 +391,9 @@ const GameSandbox: FC = () => {
         clearInterval(tileIntervalRef.current);
       }
     };
-  }, [gameActive, gameSpeed, gameStarted, level, columns, nextTileReady, levelStage]);
+  }, [gameActive, gameSpeed, gameStarted, level, columns, levelStage]);
 
-  // Game loop for moving tiles
+  // Game loop for moving tiles - ONLY CHECK FOR MISSED CURRENT TILE
   useEffect(() => {
     if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
 
@@ -417,23 +402,28 @@ const GameSandbox: FC = () => {
     }
 
     gameIntervalRef.current = setInterval(() => {
-      setTiles(prev => 
-        prev
-          .map(tile => ({
-            ...tile,
-            position: tile.position + tile.speed,
-          }))
-          .filter(tile => {
-            if (tile.position > 120 && tile.active && !tile.tapped) {
-              if (gameActive) {
-                playTileSound(150, 'miss');
-                setTimeout(() => handleGameOver('Missed tile!'), 50);
-              }
-              return false;
-            }
-            return tile.position > -40;
-          })
-      );
+      setTiles(prev => {
+        const updatedTiles = prev.map(tile => ({
+          ...tile,
+          position: tile.position + tile.speed,
+        }));
+        
+        // Find the current tile (lowest order that hasn't been tapped)
+        const currentTile = updatedTiles
+          .filter(tile => tile.active && !tile.tapped)
+          .sort((a, b) => a.order - b.order)[0];
+        
+        // Check if current tile reached bottom without being tapped
+        if (currentTile && currentTile.position > 100) {
+          // Current tile missed - game over
+          playTileSound(150, 'miss');
+          setTimeout(() => handleGameOver('Missed tile #' + currentTile.order + '!'), 50);
+          return updatedTiles;
+        }
+        
+        // Remove tiles that are way past the bottom
+        return updatedTiles.filter(tile => tile.position > -40);
+      });
 
       setGameTime(prev => prev + 1);
     }, 16);
@@ -445,7 +435,7 @@ const GameSandbox: FC = () => {
     };
   }, [gameActive, gameSpeed, gameStarted, levelStage]);
 
-  // Handle column tap - SIMPLIFIED FOR MOBILE
+  // Handle column tap
   const handleColumnTap = (columnIndex: number) => {
     // Prevent multiple taps in quick succession
     const now = Date.now();
@@ -459,17 +449,19 @@ const GameSandbox: FC = () => {
     setTouchActive(true);
     setTimeout(() => setTouchActive(false), 50);
 
-    // Find the current tile
+    // Find the current tile (lowest order that hasn't been tapped)
     const currentTile = tiles
       .filter(tile => tile.active && !tile.tapped)
       .sort((a, b) => a.order - b.order)[0];
 
     if (!currentTile) {
-      return; // Just return, don't end game
+      // No current tile found (shouldn't happen but just in case)
+      return;
     }
 
     // Check if tapped column has the current tile
     if (currentTile.column === columnIndex) {
+      // Calculate points based on timing
       const positionScore = Math.max(20, Math.round(100 - currentTile.position * 0.6));
       const basePoints = positionScore;
       let points = 0;
@@ -515,23 +507,15 @@ const GameSandbox: FC = () => {
         setShowFeedback(prev => ({...prev, show: false}));
       }, 300);
 
-      // Mark tile as tapped
-      setTiles(prev => {
-        const newTiles = prev.filter(t => t.id !== currentTile.id);
-        
-        if (newTiles.length === 0) {
-          setNextTileReady(true);
-        }
-        
-        return newTiles;
-      });
-      
-      setNextTileReady(true);
+      // Mark only the current tile as tapped
+      setTiles(prev => prev.map(tile => 
+        tile.id === currentTile.id ? {...tile, tapped: true, speed: 0.5} : tile
+      ));
       
     } else {
-      // Wrong column - game over
+      // Tapped wrong column - game over
       playTileSound(100, 'miss');
-      handleGameOver('Wrong column!');
+      handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1) + ' for tile #' + currentTile.order);
     }
   };
 
@@ -573,9 +557,7 @@ const GameSandbox: FC = () => {
     setTiles([]);
     setCurrentTileOrder(1);
     setGameTime(0);
-    setNextTileReady(true);
     tileCounter.current = 0;
-    activeTileRef.current.clear();
     startTimeRef.current = Date.now();
     lastTapRef.current = 0;
     setShowFeedback({type: 'good', show: false, text: ''});
@@ -600,9 +582,7 @@ const GameSandbox: FC = () => {
     setTiles([]);
     setCurrentTileOrder(1);
     setGameTime(0);
-    setNextTileReady(true);
     tileCounter.current = 0;
-    activeTileRef.current.clear();
     startTimeRef.current = Date.now();
     lastTapRef.current = 0;
     setShowFeedback({type: 'good', show: false, text: ''});
@@ -622,11 +602,7 @@ const GameSandbox: FC = () => {
     setGameStarted(false);
     setGameActive(false);
     setLevelStage('stage1');
-    setShowAnnouncement(false);
-    setTiles([]);
-    activeTileRef.current.clear();
-    startTimeRef.current = null;
-    cleanupAudio();
+    
     
     if (gameIntervalRef.current) clearInterval(gameIntervalRef.current);
     if (tileIntervalRef.current) clearInterval(tileIntervalRef.current);
@@ -721,7 +697,7 @@ const GameSandbox: FC = () => {
             <div className="mt-6 text-center">
               <div className="text-xs text-gray-500 mb-2">🏆 High Score: {highScore}</div>
               <div className="text-[10px] text-gray-600">
-                Tap tiles in sequence • Avoid wrong columns
+                Tap tiles in sequence • Multiple tiles show at once
               </div>
             </div>
           </div>
@@ -796,7 +772,7 @@ const GameSandbox: FC = () => {
               </div>
             </div>
 
-            {/* Game columns - SIMPLIFIED TOUCH HANDLING */}
+            {/* Game columns */}
             <div className="flex h-full pt-14">
               {Array.from({ length: columns }).map((_, columnIndex) => (
                 <div
@@ -821,13 +797,13 @@ const GameSandbox: FC = () => {
               ))}
             </div>
 
-            {/* Falling tiles */}
+            {/* Falling tiles - MULTIPLE TILES VISIBLE AT ONCE */}
             {tiles.map(tile => (
               <div
                 key={tile.id}
                 className={`absolute w-12 h-12 transition-all duration-75 rounded-lg ${
-                  tile.tapped ? 'opacity-0 scale-0' : 'opacity-100'
-                } ${tile.active && !tile.tapped && currentTile?.id === tile.id ? 'z-20' : 'z-10'}`}
+                  tile.tapped ? 'opacity-50 scale-90' : 'opacity-100'
+                } ${tile.active && !tile.tapped && currentTile?.id === tile.id ? 'z-20 border-4 border-yellow-400' : 'z-10'}`}
                 style={{
                   left: `calc(${(tile.column * 25) + 12.5}% - 24px)`,
                   top: `${tile.position}%`,
@@ -837,15 +813,21 @@ const GameSandbox: FC = () => {
                 <div className={`absolute inset-0 rounded-lg ${
                   tile.active && !tile.tapped
                     ? currentTile?.id === tile.id
-                      ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_15px_rgba(255,119,0,0.6)] animate-pulse'
-                      : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_8px_rgba(255,119,0,0.3)] opacity-90'
-                    : 'bg-gradient-to-br from-green-500 to-green-700 opacity-50'
+                      ? 'bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 shadow-[0_0_20px_rgba(255,119,0,0.8)] animate-pulse'
+                      : 'bg-gradient-to-br from-orange-400 to-orange-500 shadow-[0_0_10px_rgba(255,119,0,0.4)]'
+                    : tile.tapped
+                    ? 'bg-gradient-to-br from-green-500 to-green-700'
+                    : 'bg-gradient-to-br from-orange-300 to-orange-400 opacity-70'
                 } border-2 ${tile.active && !tile.tapped ? 'border-orange-300/60' : 'border-green-400/30'}`}>
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className={`text-sm font-bold ${
                       tile.active && !tile.tapped
-                        ? currentTile?.id === tile.id ? 'text-white' : 'text-white/90'
-                        : 'text-green-200'
+                        ? currentTile?.id === tile.id 
+                          ? 'text-white' 
+                          : 'text-white/90'
+                        : tile.tapped
+                        ? 'text-green-200'
+                        : 'text-white/70'
                     }`}>
                       {tile.order}
                     </div>
@@ -853,16 +835,18 @@ const GameSandbox: FC = () => {
                   
                   <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/20 to-transparent rounded-t-lg"></div>
                   
+                  {/* Highlight for current tile */}
                   {tile.active && !tile.tapped && currentTile?.id === tile.id && (
                     <>
-                      <div className="absolute inset-0 rounded-lg animate-ping bg-gradient-to-b from-orange-400/20 to-transparent"></div>
-                      <div className="absolute -inset-1 rounded-lg border-2 border-orange-400/40 animate-pulse"></div>
+                      <div className="absolute inset-0 rounded-lg animate-ping bg-gradient-to-b from-orange-400/30 to-transparent"></div>
+                      <div className="absolute -inset-2 rounded-lg border-2 border-yellow-400/50 animate-pulse"></div>
                     </>
                   )}
                   
+                  {/* Tap indicator for current tile */}
                   {tile.active && !tile.tapped && currentTile?.id === tile.id && tile.position < 60 && (
-                    <div className="absolute -top-5 left-1/2 transform -translate-x-1/2 text-[9px] text-orange-300 font-bold whitespace-nowrap">
-                      +{Math.round((100 - tile.position * 0.6) * multiplier)}pts
+                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[9px] text-yellow-300 font-bold whitespace-nowrap bg-black/50 px-1 rounded">
+                      TAP NOW!
                     </div>
                   )}
                 </div>
@@ -873,8 +857,17 @@ const GameSandbox: FC = () => {
             {currentTile && gameActive && (
               <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 text-center z-10">
                 <div className="bg-gradient-to-r from-gray-900/80 to-black/80 text-orange-300 text-xs px-3 py-1 rounded-full backdrop-blur-sm border border-orange-500/30">
-                  TAP: <span className="font-bold text-white">Column {currentTile.column + 1}</span>
-                  <div className="text-[9px] text-orange-400">#{currentTile.order}</div>
+                  CURRENT: <span className="font-bold text-white">Tile #{currentTile.order}</span>
+                  <div className="text-[9px] text-orange-400">Column {currentTile.column + 1}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Queue of upcoming tiles */}
+            {tiles.filter(t => t.active && !t.tapped && t.order > currentTileOrder).length > 0 && (
+              <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 text-center z-10">
+                <div className="text-[10px] text-gray-400 bg-black/30 px-2 py-1 rounded-full">
+                  Upcoming: {tiles.filter(t => t.active && !t.tapped && t.order > currentTileOrder).length} tiles
                 </div>
               </div>
             )}
@@ -994,9 +987,9 @@ const GameSandbox: FC = () => {
               </div>
               
               <div className="text-[9px] text-gray-500">
-                {score < 200 ? 'Tip: Tap tiles as soon as they appear!' :
-                 score < 500 ? 'Tip: Build combo streaks for multipliers!' :
-                 'Tip: Perfect timing gives 2x points!'}
+                {score < 200 ? 'Tip: Multiple tiles show at once - tap the lowest number!' :
+                 score < 500 ? 'Tip: Focus on the current tile (glowing border)!' :
+                 'Tip: Perfect timing on current tile gives 2x points!'}
               </div>
             </div>
           </div>
