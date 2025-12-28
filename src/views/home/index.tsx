@@ -469,7 +469,7 @@ const GameSandbox: FC = () => {
     if (isProcessingTap) return;
     
     const now = Date.now();
-    if (now - lastTapRef.current < 50) {
+    if (now - lastTapRef.current < 100) {  // Changed from 50ms to 100ms for mobile
       return;
     }
     
@@ -560,13 +560,19 @@ const GameSandbox: FC = () => {
         generateTileBatch(1);
       }
       
-      setIsProcessingTap(false);
+      // Add a small delay before allowing next tap to prevent double-processing on mobile
+      setTimeout(() => {
+        setIsProcessingTap(false);
+      }, 50);
       
     } else {
       // Tapped wrong column - game over
       playTileSound(100, 'miss');
       handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1));
-      setIsProcessingTap(false);
+      // Add delay before resetting processing state on game over
+      setTimeout(() => {
+        setIsProcessingTap(false);
+      }, 100);
     }
   };
 
@@ -722,9 +728,23 @@ const GameSandbox: FC = () => {
 
   return (
     <div className="flex items-center justify-center w-full h-full min-h-[480px] bg-gradient-to-b from-gray-950 to-black p-0 overflow-hidden">
+      <style jsx global>{`
+        * {
+          -webkit-tap-highlight-color: transparent;
+          -webkit-touch-callout: none;
+          -webkit-user-select: none;
+          -moz-user-select: none;
+          -ms-user-select: none;
+          user-select: none;
+        }
+        button, [role="button"], .game-column {
+          touch-action: manipulation;
+        }
+      `}</style>
+      
       <div 
         ref={gameContainerRef}
-        className="relative w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none mx-auto"
+        className="relative w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none mx-auto game-container"
         style={{ aspectRatio: '9/16' }}
       >
         {/* App-like glass morphism background */}
@@ -897,14 +917,18 @@ const GameSandbox: FC = () => {
               {Array.from({ length: columns }).map((_, columnIndex) => (
                 <div
                   key={`column_${columnIndex}`}
-                  className={`flex-1 relative ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} ${
+                  className={`game-column flex-1 relative ${columnIndex < columns - 1 ? 'border-r border-gray-800/30' : ''} ${
                     touchActive && currentTile?.column === columnIndex ? 'bg-orange-500/5' : ''
                   }`}
-                  onClick={() => handleColumnTap(columnIndex)}
+                  onMouseDown={() => handleColumnTap(columnIndex)}
                   onTouchStart={(e) => {
+                    // Prevent default to avoid mouse events on mobile
                     e.preventDefault();
+                    e.stopPropagation();
                     handleColumnTap(columnIndex);
                   }}
+                  // Prevent context menu on long press
+                  onContextMenu={(e) => e.preventDefault()}
                 >
                   <div className="absolute top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-gray-800/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
                   
@@ -1043,3 +1067,5 @@ const GameSandbox: FC = () => {
     </div>
   );
 };
+
+export default GameSandbox;
