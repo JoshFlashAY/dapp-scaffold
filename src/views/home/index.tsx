@@ -59,7 +59,7 @@ const GameSandbox: FC = () => {
   const [combo, setCombo] = useState(0);
   const [gameActive, setGameActive] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
-  const [gameSpeed, setGameSpeed] = useState(1);
+  const [gameSpeed, setGameSpeed] = useState(0.8); // Reduced from 1.0
   const [columns] = useState(4);
   const [tiles, setTiles] = useState<Array<{
     id: string;
@@ -458,34 +458,34 @@ const GameSandbox: FC = () => {
 
   const advanceToNextStage = () => {
     let nextLevel: 'Stage 1' | 'Stage 2' | 'Stage 3' | 'Stage 4' | 'Stage 5' = 'Stage 1';
-    let nextSpeed = 1;
+    let nextSpeed = 0.8;
     let nextStage: typeof levelStage = 'stage1';
     
     switch(level) {
       case 'Stage 1':
         nextLevel = 'Stage 2';
-        nextSpeed = 1.4;
+        nextSpeed = 1.0; // More gradual increase from 0.8
         nextStage = 'stage2';
         break;
       case 'Stage 2':
         nextLevel = 'Stage 3';
-        nextSpeed = 1.8;
+        nextSpeed = 1.2; // More gradual increase
         nextStage = 'stage3';
         break;
       case 'Stage 3':
         nextLevel = 'Stage 4';
-        nextSpeed = 2.2;
+        nextSpeed = 1.4; // More gradual increase
         nextStage = 'stage4';
         break;
       case 'Stage 4':
         nextLevel = 'Stage 5';
-        nextSpeed = 2.6;
+        nextSpeed = 1.6; // More gradual increase
         nextStage = 'stage5';
         break;
       case 'Stage 5':
         // Loop back to Stage 1 with bonus
         nextLevel = 'Stage 1';
-        nextSpeed = 3.0;
+        nextSpeed = 1.8; // Reasonable final speed
         nextStage = 'stage1';
         break;
     }
@@ -532,26 +532,26 @@ const GameSandbox: FC = () => {
       // Choose a random column
       const selectedColumn = Math.floor(Math.random() * columns);
       
-      // Speed based on level
+      // Speed based on level - GRADUAL INCREASE
       let baseSpeed;
       switch(level) {
         case 'Stage 1':
-          baseSpeed = 1.0 * gameSpeed;
+          baseSpeed = 0.7 * gameSpeed; // Slower starting speed
           break;
         case 'Stage 2':
-          baseSpeed = 1.4 * gameSpeed;
+          baseSpeed = 0.8 * gameSpeed; // Gradual increase
           break;
         case 'Stage 3':
-          baseSpeed = 1.8 * gameSpeed;
+          baseSpeed = 0.9 * gameSpeed; // Gradual increase
           break;
         case 'Stage 4':
-          baseSpeed = 2.2 * gameSpeed;
+          baseSpeed = 1.0 * gameSpeed; // Gradual increase
           break;
       case 'Stage 5':
-          baseSpeed = 2.6 * gameSpeed;
+          baseSpeed = 1.1 * gameSpeed; // Gradual increase
           break;
         default:
-          baseSpeed = 1.0 * gameSpeed;
+          baseSpeed = 0.7 * gameSpeed; // Slower starting speed
       }
       
       const newTile = {
@@ -628,7 +628,7 @@ const GameSandbox: FC = () => {
       if (gameActive && gameStarted && tileReleaseQueueRef.current.length < 2 && activeTileCount < 2) {
         generateTileBatch(1);
       }
-    }, 800); // Check every 800ms, but only generate if needed
+    }, 1000); // Slower check interval for more breathing room
   };
 
   // Continuously generate more tiles
@@ -670,8 +670,8 @@ const GameSandbox: FC = () => {
         if (currentTileId) {
           const currentTile = updatedTiles.find(t => t.id === currentTileId);
           
-          // Check if current tile missed
-          if (currentTile && currentTile.released && !currentTile.disintegrating && currentTile.position > 90) {
+          // Check if current tile missed - HIGHER THRESHOLD FOR MORE TIME
+          if (currentTile && currentTile.released && !currentTile.disintegrating && currentTile.position > 95) { // Changed from 90 to 95
             playTileSound(150, 'miss');
             setTimeout(() => handleGameOver('Missed tile #' + currentTile.order + '!'), 50);
             return updatedTiles;
@@ -696,7 +696,7 @@ const GameSandbox: FC = () => {
     const now = Date.now();
     
     // Prevent multiple rapid taps
-    if (now - lastTapRef.current < 100) {
+    if (now - lastTapRef.current < 120) { // Increased from 100ms for more forgiveness
       return;
     }
     
@@ -733,7 +733,7 @@ const GameSandbox: FC = () => {
       // Only generate if we have less than 1 tile in queue and less than 1 tile on screen
       const activeTileCount = tiles.filter(t => !t.disintegrating).length;
       if (tileReleaseQueueRef.current.length < 1 && activeTileCount < 1) {
-        setTimeout(() => generateTileBatch(1), 200);
+        setTimeout(() => generateTileBatch(1), 300); // Increased from 200ms
       }
       return;
     }
@@ -752,7 +752,8 @@ const GameSandbox: FC = () => {
       let feedback: 'perfect' | 'good' = 'good';
       let feedbackText = 'GOOD!';
       
-      if (currentTile.position < 50) {
+      // ADJUSTED TIMING WINDOWS FOR EASIER PLAY
+      if (currentTile.position < 55) { // Changed from 50
         points = 10;
         feedback = 'perfect';
         feedbackText = 'PERFECT!';
@@ -773,7 +774,7 @@ const GameSandbox: FC = () => {
           }
           return newStreak;
         });
-      } else if (currentTile.position < 80) {
+      } else if (currentTile.position < 85) { // Changed from 80
         points = 5;
         feedback = 'good';
         feedbackText = 'GREAT!';
@@ -828,14 +829,14 @@ const GameSandbox: FC = () => {
       // Remove tile after animation
       setTimeout(() => {
         setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
-      }, 200);
+      }, 250); // Increased from 200ms
       
       // Check if need more tiles - generate only if we have room
       const nextTileId = tileOrderMapRef.current.get(nextOrder);
       const activeTileCount = tiles.filter(t => !t.disintegrating).length - 1; // Subtract current tile being removed
       
       if (!nextTileId && tileReleaseQueueRef.current.length < 1 && activeTileCount < 1) {
-        setTimeout(() => generateTileBatch(1), 300);
+        setTimeout(() => generateTileBatch(1), 400); // Increased from 300ms
       }
       
     } else {
@@ -890,7 +891,7 @@ const GameSandbox: FC = () => {
     setMultiplier(1);
     setGameActive(true);
     setGameStarted(true);
-    setGameSpeed(1);
+    setGameSpeed(0.8); // Slower start
     setLevel('Stage 1');
     setLevelStage('stage1');
     setStageTimer(30);
@@ -915,7 +916,7 @@ const GameSandbox: FC = () => {
     // Start tile generation immediately for stage 1
     setTimeout(() => {
       startTileBatchGeneration();
-    }, 300);
+    }, 400); // Increased from 300ms for slower start
   };
 
   const restartGame = () => {
@@ -934,7 +935,7 @@ const GameSandbox: FC = () => {
     setStreak(0);
     setMultiplier(1);
     setGameActive(true);
-    setGameSpeed(1);
+    setGameSpeed(0.8); // Slower start
     setLevel('Stage 1');
     setLevelStage('stage1');
     setStageTimer(30);
@@ -958,7 +959,7 @@ const GameSandbox: FC = () => {
     // Start tile generation immediately for stage 1
     setTimeout(() => {
       startTileBatchGeneration();
-    }, 300);
+    }, 400); // Increased from 300ms for slower start
   };
 
   const exitToMenu = () => {
@@ -1120,9 +1121,9 @@ const GameSandbox: FC = () => {
                   </button>
                   
                   <div className="text-sm text-gray-400 mb-2 font-semibold">🏆 HIGH SCORE: {highScore}</div>
-                  <div className="text-xs text-gray-500 mb-2">5 Stages • 30s Each • Progressive Speed</div>
+                  <div className="text-xs text-gray-500 mb-2">5 Stages • 30s Each • Gradual Speed Increase</div>
                   <div className="text-xs text-gray-600">
-                    Fixed mobile touch controls • One tile at a time
+                    Fixed mobile touch controls • Comfortable pacing
                   </div>
                 </>
               ) : (
@@ -1219,10 +1220,10 @@ const GameSandbox: FC = () => {
                 Next Stage Starting...
               </div>
               <div className="text-xs text-gray-400">
-                Speed increases to ×{level === 'Stage 1' ? '1.4' : 
-                                   level === 'Stage 2' ? '1.8' :
-                                   level === 'Stage 3' ? '2.2' :
-                                   level === 'Stage 4' ? '2.6' : '3.0'}
+                Speed increases to ×{level === 'Stage 1' ? '1.0' : 
+                                   level === 'Stage 2' ? '1.2' :
+                                   level === 'Stage 3' ? '1.4' :
+                                   level === 'Stage 4' ? '1.6' : '1.8'}
               </div>
             </div>
           </div>
