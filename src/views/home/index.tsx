@@ -53,6 +53,7 @@ export const HomeView: FC = () => {
 // Keep the name `GameSandbox` and the `FC` type.
 
 
+
 const GameSandbox: FC = () => {
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
@@ -452,7 +453,7 @@ const GameSandbox: FC = () => {
     stageCompleteRef.current = setTimeout(() => {
       setShowStageComplete(false);
       advanceToNextStage();
-    }, 2000);
+    }, 1500);
   };
 
   const advanceToNextStage = () => {
@@ -489,6 +490,13 @@ const GameSandbox: FC = () => {
         break;
     }
     
+    // Reset tiles completely for new stage
+    setTiles([]);
+    tileOrderMapRef.current.clear();
+    tileReleaseQueueRef.current = [];
+    setCurrentTileOrder(1);
+    tileCounter.current = 0;
+    
     setLevel(nextLevel);
     setGameSpeed(nextSpeed);
     setStageTimer(30);
@@ -497,6 +505,11 @@ const GameSandbox: FC = () => {
     setGameActive(true);
     
     playTileSound(800, 'hit');
+    
+    // Start tile generation immediately for all stages
+    setTimeout(() => {
+      startTileBatchGeneration();
+    }, 300);
   };
 
   // Generate unique ID for tiles
@@ -505,58 +518,45 @@ const GameSandbox: FC = () => {
     return `tile_${tileCounter.current}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   };
 
-  // Generate tiles in batches
+  // Generate tiles in batches - ONLY 1 TILE AT A TIME
   const generateTileBatch = (count: number) => {
     const now = Date.now();
     const newTiles = [];
     
-    // Get current column positions to avoid spawning too close
-    const currentColumns = new Set();
-    tiles.forEach(tile => {
-      if (tile.released && !tile.disintegrating && tile.position < 50) {
-        currentColumns.add(tile.column);
-      }
-    });
+    // Only generate 1 tile at a time maximum
+    const tilesToGenerate = 1;
     
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < tilesToGenerate; i++) {
       const order = tileCounter.current + 1;
       
-      // Choose a column that doesn't have recent tiles
-      let availableColumns = Array.from({ length: columns }, (_, i) => i);
-      availableColumns = availableColumns.filter(col => !currentColumns.has(col));
-      
-      if (availableColumns.length === 0) {
-        availableColumns = Array.from({ length: columns }, (_, i) => i);
-      }
-      
-      const orangeColumn = availableColumns[Math.floor(Math.random() * availableColumns.length)];
-      currentColumns.add(orangeColumn);
+      // Choose a random column
+      const selectedColumn = Math.floor(Math.random() * columns);
       
       // Speed based on level
       let baseSpeed;
       switch(level) {
         case 'Stage 1':
-          baseSpeed = 0.8 * gameSpeed;
+          baseSpeed = 1.0 * gameSpeed;
           break;
         case 'Stage 2':
-          baseSpeed = 1.2 * gameSpeed;
+          baseSpeed = 1.4 * gameSpeed;
           break;
         case 'Stage 3':
           baseSpeed = 1.8 * gameSpeed;
           break;
         case 'Stage 4':
-          baseSpeed = 2.4 * gameSpeed;
+          baseSpeed = 2.2 * gameSpeed;
           break;
-        case 'Stage 5':
-          baseSpeed = 3.0 * gameSpeed;
+      case 'Stage 5':
+          baseSpeed = 2.6 * gameSpeed;
           break;
         default:
-          baseSpeed = 0.8 * gameSpeed;
+          baseSpeed = 1.0 * gameSpeed;
       }
       
       const newTile = {
         id: generateId(),
-        column: orangeColumn,
+        column: selectedColumn,
         position: -40,
         active: true,
         speed: baseSpeed,
@@ -565,13 +565,13 @@ const GameSandbox: FC = () => {
         released: false,
       };
       
-      // Stagger release times
-      const releaseTime = now + (i * 1200);
+      // Release timing - immediate
+      const releaseTime = now + 100;
       
       tileOrderMapRef.current.set(order, newTile.id);
       tileReleaseQueueRef.current.push({
         id: newTile.id,
-        column: orangeColumn,
+        column: selectedColumn,
         order: order,
         releaseTime: releaseTime,
       });
@@ -594,12 +594,42 @@ const GameSandbox: FC = () => {
     });
   };
 
-  // Generate initial batch
+  // Generate initial batch for game start
   useEffect(() => {
     if (gameActive && gameStarted && tiles.length === 0 && tileReleaseQueueRef.current.length === 0) {
-      generateTileBatch(2);
+      // Generate only 1 tile to start
+      setTimeout(() => {
+        generateTileBatch(1);
+      }, 100);
     }
   }, [gameActive, gameStarted, tiles.length, level, gameSpeed]);
+
+  // Start batch tile generation - ONE TILE AT A TIME
+  const startTileBatchGeneration = () => {
+    if (!gameActive || !gameStarted) return;
+    
+    // Clear any existing interval
+    if (tileIntervalRef.current) {
+      clearInterval(tileIntervalRef.current);
+    }
+    
+    // Generate first batch immediately (only 1 tile to start)
+    if (tileReleaseQueueRef.current.length < 1) {
+      generateTileBatch(1);
+    }
+    
+    // Set interval for continuous generation - ONLY WHEN NEEDED
+    tileIntervalRef.current = setInterval(() => {
+      // Only generate if:
+      // 1. Game is active
+      // 2. We have less than 2 tiles in the release queue (so at most 1 upcoming tile)
+      // 3. We have less than 2 tiles on screen (not including disintegrating ones)
+      const activeTileCount = tiles.filter(t => !t.disintegrating).length;
+      if (gameActive && gameStarted && tileReleaseQueueRef.current.length < 2 && activeTileCount < 2) {
+        generateTileBatch(1);
+      }
+    }, 800); // Check every 800ms, but only generate if needed
+  };
 
   // Continuously generate more tiles
   useEffect(() => {
@@ -609,11 +639,8 @@ const GameSandbox: FC = () => {
       clearInterval(tileIntervalRef.current);
     }
 
-    tileIntervalRef.current = setInterval(() => {
-      if (tileReleaseQueueRef.current.length < 2) {
-        generateTileBatch(2);
-      }
-    }, 2500);
+    // Start tile generation immediately for all stages
+    startTileBatchGeneration();
 
     return () => {
       if (tileIntervalRef.current) {
@@ -644,7 +671,7 @@ const GameSandbox: FC = () => {
           const currentTile = updatedTiles.find(t => t.id === currentTileId);
           
           // Check if current tile missed
-          if (currentTile && currentTile.released && !currentTile.disintegrating && currentTile.position > 100) {
+          if (currentTile && currentTile.released && !currentTile.disintegrating && currentTile.position > 90) {
             playTileSound(150, 'miss');
             setTimeout(() => handleGameOver('Missed tile #' + currentTile.order + '!'), 50);
             return updatedTiles;
@@ -669,7 +696,7 @@ const GameSandbox: FC = () => {
     const now = Date.now();
     
     // Prevent multiple rapid taps
-    if (now - lastTapRef.current < 100) { // Increased from 30ms to 100ms for mobile
+    if (now - lastTapRef.current < 100) {
       return;
     }
     
@@ -686,7 +713,7 @@ const GameSandbox: FC = () => {
     
     // Visual feedback
     setActiveTapColumn(columnIndex);
-    setTimeout(() => setActiveTapColumn(null), 150);
+    setTimeout(() => setActiveTapColumn(null), 100);
     
     // Process the tap
     processColumnTap(columnIndex);
@@ -694,16 +721,20 @@ const GameSandbox: FC = () => {
     // Release touch lock after delay
     setTimeout(() => {
       touchInProgressRef.current = false;
-    }, 150);
+    }, 100);
   };
 
-  // Process individual tap
+  // Process individual tap with updated scoring
   const processColumnTap = (columnIndex: number) => {
     // Get current tile ID
     const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
     
     if (!currentTileId) {
-      generateTileBatch(1);
+      // Only generate if we have less than 1 tile in queue and less than 1 tile on screen
+      const activeTileCount = tiles.filter(t => !t.disintegrating).length;
+      if (tileReleaseQueueRef.current.length < 1 && activeTileCount < 1) {
+        setTimeout(() => generateTileBatch(1), 200);
+      }
       return;
     }
 
@@ -716,47 +747,53 @@ const GameSandbox: FC = () => {
 
     // Check if tapped column has the current tile
     if (currentTile.column === columnIndex) {
-      const positionScore = Math.max(20, Math.round(100 - currentTile.position * 0.6));
-      const basePoints = positionScore;
+      // Calculate points based on timing (reduced points)
       let points = 0;
       let feedback: 'perfect' | 'good' = 'good';
       let feedbackText = 'GOOD!';
       
       if (currentTile.position < 50) {
-        points = basePoints * multiplier * 2.0;
+        points = 10;
         feedback = 'perfect';
         feedbackText = 'PERFECT!';
         playTileSound(1000 + Math.random() * 300, 'perfect');
+        
+        // Streak bonus: +1 point for streaks of 3 or more
+        if (streak >= 3) {
+          points += 1;
+        }
+        
         setStreak(prev => {
           const newStreak = prev + 1;
-          if (newStreak % 3 === 0) {
-            setMultiplier(prevMult => Math.min(prevMult + 0.5, 4));
+          // Simplified streak effect (no multiplier)
+          if (newStreak % 5 === 0) {
             setShowStreakEffect(true);
             if (streakEffectRef.current) clearTimeout(streakEffectRef.current);
-            streakEffectRef.current = setTimeout(() => setShowStreakEffect(false), 1000);
+            streakEffectRef.current = setTimeout(() => setShowStreakEffect(false), 800);
           }
           return newStreak;
         });
       } else if (currentTile.position < 80) {
-        points = basePoints * multiplier;
+        points = 5;
         feedback = 'good';
         feedbackText = 'GREAT!';
         playTileSound(700 + Math.random() * 200, 'hit');
         setStreak(prev => prev + 1);
       } else {
-        points = basePoints * multiplier * 0.8;
+        points = 2;
         feedback = 'good';
         feedbackText = 'GOOD!';
         playTileSound(500 + Math.random() * 150, 'hit');
         setStreak(prev => Math.max(1, prev + 0.5));
       }
 
+      // Level bonus (small bonus instead of multiplier)
       const levelBonus = 
-        level === 'Stage 2' ? 1.5 : 
-        level === 'Stage 3' ? 2.0 : 
-        level === 'Stage 4' ? 2.5 : 
-        level === 'Stage 5' ? 3.0 : 1;
-      points = Math.round(points * levelBonus);
+        level === 'Stage 2' ? 1 : 
+        level === 'Stage 3' ? 2 : 
+        level === 'Stage 4' ? 3 : 
+        level === 'Stage 5' ? 4 : 0;
+      points = points + levelBonus;
 
       setScore(prev => prev + Math.round(points));
       setCombo(prev => prev + 1);
@@ -773,12 +810,17 @@ const GameSandbox: FC = () => {
       const nextOrder = currentTileOrder + 1;
       setCurrentTileOrder(nextOrder);
       
-      setShowFeedback({type: feedback, show: true, text: feedbackText});
+      // Show smaller feedback
+      setShowFeedback({
+        type: feedback, 
+        show: true, 
+        text: `${feedbackText} +${points}`
+      });
       setLastTapTime(Date.now());
       
       setTimeout(() => {
         setShowFeedback(prev => ({...prev, show: false}));
-      }, 200);
+      }, 400);
 
       // Clear from order map
       tileOrderMapRef.current.delete(currentTileOrder);
@@ -786,18 +828,20 @@ const GameSandbox: FC = () => {
       // Remove tile after animation
       setTimeout(() => {
         setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
-      }, 300);
+      }, 200);
       
-      // Check if need more tiles
+      // Check if need more tiles - generate only if we have room
       const nextTileId = tileOrderMapRef.current.get(nextOrder);
-      if (!nextTileId && tileReleaseQueueRef.current.length < 2) {
-        setTimeout(() => generateTileBatch(1), 500);
+      const activeTileCount = tiles.filter(t => !t.disintegrating).length - 1; // Subtract current tile being removed
+      
+      if (!nextTileId && tileReleaseQueueRef.current.length < 1 && activeTileCount < 1) {
+        setTimeout(() => generateTileBatch(1), 300);
       }
       
     } else {
       // Wrong column - game over
       playTileSound(100, 'miss');
-      handleGameOver('Wrong column! Tap column ' + (currentTile.column + 1));
+      handleGameOver('Wrong column!');
     }
   };
 
@@ -825,7 +869,7 @@ const GameSandbox: FC = () => {
       setShowMenu(true);
       setMenuState('gameOver');
       setShowFeedback(prev => ({...prev, show: false}));
-    }, 800);
+    }, 500);
   };
 
   const startGame = () => {
@@ -836,7 +880,7 @@ const GameSandbox: FC = () => {
     initAudio();
     setTimeout(() => {
       startBackgroundMusic();
-    }, 300);
+    }, 200);
     
     playTileSound(1500, 'perfect');
     
@@ -867,6 +911,11 @@ const GameSandbox: FC = () => {
     setShowStreakEffect(false);
     setStageComplete(false);
     setShowStageComplete(false);
+    
+    // Start tile generation immediately for stage 1
+    setTimeout(() => {
+      startTileBatchGeneration();
+    }, 300);
   };
 
   const restartGame = () => {
@@ -875,7 +924,7 @@ const GameSandbox: FC = () => {
     setTimeout(() => {
       initAudio();
       startBackgroundMusic();
-    }, 300);
+    }, 200);
     
     playTileSound(1200, 'hit');
     
@@ -905,6 +954,11 @@ const GameSandbox: FC = () => {
     setShowStreakEffect(false);
     setStageComplete(false);
     setShowStageComplete(false);
+    
+    // Start tile generation immediately for stage 1
+    setTimeout(() => {
+      startTileBatchGeneration();
+    }, 300);
   };
 
   const exitToMenu = () => {
@@ -928,21 +982,6 @@ const GameSandbox: FC = () => {
     setStageComplete(false);
     setShowStageComplete(false);
   };
-
-  // Multiplier progression
-  useEffect(() => {
-    if (streak >= 15) {
-      setMultiplier(4);
-    } else if (streak >= 10) {
-      setMultiplier(3);
-    } else if (streak >= 6) {
-      setMultiplier(2.5);
-    } else if (streak >= 3) {
-      setMultiplier(2);
-    } else if (streak >= 1) {
-      setMultiplier(1.5);
-    }
-  }, [streak]);
 
   // Find current tile
   const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
@@ -982,7 +1021,7 @@ const GameSandbox: FC = () => {
         }
         
         .tile-disintegrate {
-          animation: tileShatter 0.25s ease-out forwards;
+          animation: tileShatter 0.15s ease-out forwards;
         }
         
         @keyframes tileShatter {
@@ -1009,7 +1048,7 @@ const GameSandbox: FC = () => {
         }
         
         .column-tap {
-          animation: columnFlash 0.15s ease-out;
+          animation: columnFlash 0.1s ease-out;
         }
         
         @keyframes columnFlash {
@@ -1019,7 +1058,7 @@ const GameSandbox: FC = () => {
         }
         
         .streak-effect {
-          animation: streakPulse 0.5s ease-out;
+          animation: streakPulse 0.3s ease-out;
         }
         
         @keyframes streakPulse {
@@ -1029,7 +1068,7 @@ const GameSandbox: FC = () => {
         }
         
         .stage-complete {
-          animation: stageCompleteAnim 2s ease-out;
+          animation: stageCompleteAnim 1.5s ease-out;
         }
         
         @keyframes stageCompleteAnim {
@@ -1083,7 +1122,7 @@ const GameSandbox: FC = () => {
                   <div className="text-sm text-gray-400 mb-2 font-semibold">🏆 HIGH SCORE: {highScore}</div>
                   <div className="text-xs text-gray-500 mb-2">5 Stages • 30s Each • Progressive Speed</div>
                   <div className="text-xs text-gray-600">
-                    Fixed mobile touch controls • No audio bugs
+                    Fixed mobile touch controls • One tile at a time
                   </div>
                 </>
               ) : (
@@ -1122,8 +1161,8 @@ const GameSandbox: FC = () => {
                       <div className="text-xl font-bold text-yellow-300">{highScore}</div>
                     </div>
                     <div className="bg-gray-900/70 rounded-xl p-3 border border-orange-500/20">
-                      <div className="text-xs text-gray-400 mb-1">MULTIPLIER</div>
-                      <div className="text-xl font-bold text-green-300">×{multiplier.toFixed(1)}</div>
+                      <div className="text-xs text-gray-400 mb-1">STREAK</div>
+                      <div className="text-xl font-bold text-green-300">{streak}</div>
                     </div>
                   </div>
                   
@@ -1153,7 +1192,7 @@ const GameSandbox: FC = () => {
                   </div>
                   
                   <div className="text-xs text-gray-400">
-                    {score < 200 ? 'Keep going! Perfect taps give 2× points!' :
+                    {score < 200 ? 'Keep going! Perfect taps give bonus points!' :
                      score < 500 ? 'Nice! Try to maintain your streak!' :
                      'Incredible! You are a rhythm master!'}
                   </div>
@@ -1206,8 +1245,8 @@ const GameSandbox: FC = () => {
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xs font-semibold text-gray-400 tracking-wide">COMBO</div>
-                  <div className="text-lg font-bold text-yellow-300 tracking-wider">{combo}×</div>
+                  <div className="text-xs font-semibold text-gray-400 tracking-wide">TILES</div>
+                  <div className="text-lg font-bold text-yellow-300 tracking-wider">{tiles.filter(t => !t.disintegrating).length}</div>
                 </div>
               </div>
               
@@ -1276,11 +1315,6 @@ const GameSandbox: FC = () => {
                 >
                   {/* Column guide line */}
                   <div className="absolute top-0 bottom-0 w-0.5 bg-gradient-to-b from-transparent via-orange-500/20 to-transparent left-1/2 transform -translate-x-1/2"></div>
-                  
-                  {/* Column number */}
-                  <div className="absolute top-2 left-1/2 transform -translate-x-1/2 text-xs text-gray-500 font-bold">
-                    {columnIndex + 1}
-                  </div>
                 </div>
               ))}
             </div>
@@ -1359,37 +1393,33 @@ const GameSandbox: FC = () => {
               </div>
             ))}
 
-            {/* Current tile indicator */}
+            {/* Current tile indicator (simplified - no column info) */}
             {currentTile && gameActive && (
               <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 text-center z-30">
                 <div className="bg-gradient-to-r from-gray-900/90 to-black/90 text-orange-300 text-sm px-4 py-2 rounded-full backdrop-blur-md border-2 border-orange-500/50 shadow-lg">
                   <span className="font-bold text-white">TILE #{currentTile.order}</span>
-                  <div className="text-xs text-orange-400 mt-1">COLUMN {currentTile.column + 1}</div>
                 </div>
               </div>
             )}
 
-            {/* Timing feedback */}
+            {/* Timing feedback (smaller) */}
             {showFeedback.show && (
-              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-xl font-black z-40 ${
+              <div className={`absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-lg font-black z-40 ${
                 showFeedback.type === 'perfect' 
-                  ? 'text-yellow-300 animate-bounce drop-shadow-[0_0_10px_rgba(255,215,0,0.8)]' 
-                  : 'text-orange-300 animate-pulse drop-shadow-[0_0_8px_rgba(255,165,0,0.6)]'
+                  ? 'text-yellow-300 animate-bounce drop-shadow-[0_0_8px_rgba(255,215,0,0.6)]' 
+                  : showFeedback.type === 'good'
+                  ? 'text-orange-300 animate-pulse drop-shadow-[0_0_6px_rgba(255,165,0,0.4)]'
+                  : 'text-red-300 animate-pulse drop-shadow-[0_0_6px_rgba(255,0,0,0.4)]'
               }`}>
                 {showFeedback.text}
-                {showFeedback.type === 'perfect' && (
-                  <div className="text-sm text-center mt-2 text-yellow-200 font-bold">
-                    +{Math.round(100 * multiplier)} POINTS
-                  </div>
-                )}
               </div>
             )}
 
             {/* Streak effect */}
             {showStreakEffect && (
               <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 streak-effect">
-                <div className="text-4xl font-bold bg-gradient-to-r from-yellow-300 to-orange-300 bg-clip-text text-transparent">
-                  ✨ MULTIPLIER UP! ✨
+                <div className="text-xl font-bold bg-gradient-to-r from-yellow-300 to-orange-300 bg-clip-text text-transparent">
+                  STREAK +1!
                 </div>
               </div>
             )}
