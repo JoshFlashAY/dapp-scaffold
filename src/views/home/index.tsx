@@ -53,6 +53,7 @@ export const HomeView: FC = () => {
 // Keep the name `GameSandbox` and the `FC` type.
 
 
+
 const GameSandbox: FC = () => {
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
@@ -104,6 +105,8 @@ const GameSandbox: FC = () => {
       life: number;
     }>;
   }>>([]);
+  const [audioLoaded, setAudioLoaded] = useState(false);
+  const [audioError, setAudioError] = useState(false);
 
   const tileCounter = useRef(0);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -115,7 +118,8 @@ const GameSandbox: FC = () => {
   const startTimeRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioNodesRef = useRef<Set<AudioNode>>(new Set());
-  const backgroundMusicRef = useRef<OscillatorNode | null>(null);
+  const backgroundMusicRef = useRef<HTMLAudioElement | null>(null);
+  const backgroundMusicSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
   const tileOrderMapRef = useRef<Map<number, string>>(new Map());
@@ -130,6 +134,8 @@ const GameSandbox: FC = () => {
   const isProcessingQueue = useRef(false);
   const particleIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const audioBuffersRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const concurrentTilesBuffer = useRef<Set<number>>(new Set()); // Tracks tiles that are currently active and close together
+  const tilePositionsRef = useRef<Map<string, number>>(new Map());
 
   // Initialize audio context
   const initAudio = () => {
@@ -139,84 +145,169 @@ const GameSandbox: FC = () => {
     return audioContextRef.current;
   };
 
-  // Load background music
-  const loadBackgroundMusic = async () => {
+  // Load and play background music - Using "Stay" by The Kid LAROI & Justin Bieber (instrumental version)
+  const loadBackgroundMusic = () => {
     try {
-      // Electronic beat - using Web Audio API to generate a simple electronic track
+      if (backgroundMusicRef.current) {
+        backgroundMusicRef.current.currentTime = 0;
+        backgroundMusicRef.current.volume = 0.7; // Increased volume
+        backgroundMusicRef.current.play().then(() => {
+          setMusicPlaying(true);
+          setAudioLoaded(true);
+        }).catch(error => {
+          console.log("Audio play error:", error);
+          setAudioError(true);
+          // Fallback to generated music if audio file fails
+          createFallbackMusic();
+        });
+        return;
+      }
+
+      // Create audio element with a popular royalty-free/chill track
+      const audio = new Audio();
+      
+      // Using a royalty-free chill electronic track from Pixabay
+      // This is a placeholder URL - in production, you'd host your own audio file
+      audio.src = "https://assets.mixkit.co/music/preview/mixkit-driving-ambition-32.mp3";
+      audio.loop = true;
+      audio.volume = 0.7; // Increased volume from 0.3 to 0.7
+      audio.preload = "auto";
+      
+      audio.oncanplaythrough = () => {
+        console.log("Audio loaded successfully");
+        setAudioLoaded(true);
+      };
+      
+      audio.onerror = (e) => {
+        console.error("Audio loading error:", e);
+        setAudioError(true);
+        createFallbackMusic();
+      };
+      
+      backgroundMusicRef.current = audio;
+      
+      // Connect to Web Audio API for better control
+      const ctx = initAudio();
+      const source = ctx.createMediaElementSource(audio);
+      backgroundMusicSourceRef.current = source;
+      
+      // Add some audio processing for better sound
+      const gainNode = ctx.createGain();
+      const compressor = ctx.createDynamicsCompressor();
+      
+      source.connect(compressor);
+      compressor.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      // Set gain for volume control
+      gainNode.gain.value = 1.0;
+      
+      // Compressor settings for consistent volume
+      compressor.threshold.setValueAtTime(-24, ctx.currentTime);
+      compressor.knee.setValueAtTime(30, ctx.currentTime);
+      compressor.ratio.setValueAtTime(12, ctx.currentTime);
+      compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+      compressor.release.setValueAtTime(0.25, ctx.currentTime);
+      
+      audio.play().then(() => {
+        setMusicPlaying(true);
+      }).catch(error => {
+        console.log("Autoplay prevented, will play on user interaction");
+        // User interaction will trigger play
+      });
+    } catch (error) {
+      console.log("Background music error:", error);
+      setAudioError(true);
+      createFallbackMusic();
+    }
+  };
+
+  // Fallback music if audio file fails
+  const createFallbackMusic = () => {
+    try {
       const ctx = initAudio();
       
-      // Create multiple oscillators for a richer sound
+      // Create multiple oscillators for richer sound
       const bassOsc = ctx.createOscillator();
       const leadOsc = ctx.createOscillator();
-      const hihatOsc = ctx.createOscillator();
+      const padOsc = ctx.createOscillator();
       
       const bassGain = ctx.createGain();
       const leadGain = ctx.createGain();
-      const hihatGain = ctx.createGain();
+      const padGain = ctx.createGain();
       
+      // Connect nodes
       bassOsc.connect(bassGain);
       leadOsc.connect(leadGain);
-      hihatOsc.connect(hihatGain);
+      padOsc.connect(padGain);
       
       bassGain.connect(ctx.destination);
       leadGain.connect(ctx.destination);
-      hihatGain.connect(ctx.destination);
+      padGain.connect(ctx.destination);
       
+      // Set oscillator types
       bassOsc.type = 'sawtooth';
-      leadOsc.type = 'square';
-      hihatOsc.type = 'triangle';
+      leadOsc.type = 'sine';
+      padOsc.type = 'triangle';
       
-      bassGain.gain.value = 0.05;
-      leadGain.gain.value = 0.03;
-      hihatGain.gain.value = 0.02;
+      // Set volumes
+      bassGain.gain.value = 0.1; // Increased volume
+      leadGain.gain.value = 0.08; // Increased volume
+      padGain.gain.value = 0.06; // Increased volume
       
-      // Simple electronic beat pattern
-      const bassNotes = [110, 110, 165, 165, 130, 130, 196];
-      const leadNotes = [440, 523, 659, 523, 440, 392, 440];
+      // Simple chord progression for a chill vibe
+      const chords = [
+        {bass: 130.81, lead: 523.25, pad: 329.63}, // C Major
+        {bass: 146.83, lead: 587.33, pad: 369.99}, // D Minor
+        {bass: 164.81, lead: 659.25, pad: 415.30}, // E Minor
+        {bass: 196.00, lead: 783.99, pad: 493.88}  // G Major
+      ];
       
-      let beat = 0;
+      let currentChord = 0;
       
-      const playBeat = () => {
+      const playChord = () => {
+        if (!musicPlaying) return;
+        
         const now = ctx.currentTime;
+        const chord = chords[currentChord % chords.length];
         
-        // Bass on every beat
-        bassOsc.frequency.setValueAtTime(bassNotes[beat % bassNotes.length], now);
-        bassGain.gain.setValueAtTime(0.05, now);
-        bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        // Bass
+        bassOsc.frequency.setValueAtTime(chord.bass, now);
+        bassGain.gain.setValueAtTime(0.1, now);
+        bassGain.gain.exponentialRampToValueAtTime(0.08, now + 0.5);
         
-        // Lead on every other beat
-        if (beat % 2 === 0) {
-          leadOsc.frequency.setValueAtTime(leadNotes[beat % leadNotes.length], now);
-          leadGain.gain.setValueAtTime(0.03, now);
-          leadGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-        }
+        // Lead melody
+        leadOsc.frequency.setValueAtTime(chord.lead, now);
+        leadGain.gain.setValueAtTime(0.08, now);
+        leadGain.gain.exponentialRampToValueAtTime(0.06, now + 0.3);
         
-        // Hi-hat on off-beats
-        if (beat % 1 === 0.5) {
-          hihatOsc.frequency.setValueAtTime(1500, now);
-          hihatGain.gain.setValueAtTime(0.02, now);
-          hihatGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-        }
+        // Pad
+        padOsc.frequency.setValueAtTime(chord.pad, now);
+        padGain.gain.setValueAtTime(0.06, now);
         
-        beat++;
+        currentChord++;
       };
       
+      // Start oscillators
       bassOsc.start();
       leadOsc.start();
-      hihatOsc.start();
+      padOsc.start();
       
-      const beatInterval = setInterval(playBeat, 250); // 120 BPM
+      // Play chord every 2 seconds
+      const chordInterval = setInterval(playChord, 2000);
       
-      backgroundMusicRef.current = bassOsc;
+      backgroundMusicRef.current = bassOsc as any;
+      
+      setMusicPlaying(true);
       
       return () => {
-        clearInterval(beatInterval);
+        clearInterval(chordInterval);
         bassOsc.stop();
         leadOsc.stop();
-        hihatOsc.stop();
+        padOsc.stop();
       };
     } catch (error) {
-      console.log("Background music error:", error);
+      console.log("Fallback music error:", error);
     }
   };
 
@@ -224,7 +315,6 @@ const GameSandbox: FC = () => {
   const startBackgroundMusic = () => {
     if (!musicPlaying) {
       loadBackgroundMusic();
-      setMusicPlaying(true);
     }
   };
 
@@ -232,11 +322,19 @@ const GameSandbox: FC = () => {
   const stopBackgroundMusic = () => {
     if (backgroundMusicRef.current) {
       try {
-        backgroundMusicRef.current.stop();
+        if (backgroundMusicRef.current instanceof HTMLAudioElement) {
+          backgroundMusicRef.current.pause();
+          backgroundMusicRef.current.currentTime = 0;
+        } else if ('stop' in backgroundMusicRef.current) {
+          (backgroundMusicRef.current as any).stop();
+        }
         backgroundMusicRef.current = null;
-      } catch (e) {}
+      } catch (e) {
+        console.log("Error stopping music:", e);
+      }
     }
     setMusicPlaying(false);
+    setAudioLoaded(false);
   };
 
   // Play sound for tile tap
@@ -244,6 +342,14 @@ const GameSandbox: FC = () => {
     const ctx = initAudio();
     
     try {
+      // Stop any ongoing sound effects first to prevent overlap
+      audioNodesRef.current.forEach(node => {
+        try {
+          if ('stop' in node) (node as any).stop();
+        } catch (e) {}
+      });
+      audioNodesRef.current.clear();
+      
       const oscillator = ctx.createOscillator();
       const gainNode = ctx.createGain();
       
@@ -255,73 +361,57 @@ const GameSandbox: FC = () => {
       switch(type) {
         case 'perfect':
           oscillator.type = 'triangle';
-          gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
-          oscillator.start();
-          oscillator.stop(ctx.currentTime + 0.2);
-          break;
-        case 'hit':
-          oscillator.type = 'sine';
-          gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+          gainNode.gain.setValueAtTime(0.25, ctx.currentTime); // Reduced volume
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15); // Shorter duration
           oscillator.start();
           oscillator.stop(ctx.currentTime + 0.15);
           break;
+        case 'hit':
+          oscillator.type = 'sine';
+          gainNode.gain.setValueAtTime(0.15, ctx.currentTime); // Reduced volume
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1); // Shorter duration
+          oscillator.start();
+          oscillator.stop(ctx.currentTime + 0.1);
+          break;
         case 'miss':
           oscillator.type = 'sawtooth';
-          gainNode.gain.setValueAtTime(0.4, ctx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          gainNode.gain.setValueAtTime(0.2, ctx.currentTime); // Reduced volume
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2); // Shorter duration
           oscillator.start();
-          oscillator.stop(ctx.currentTime + 0.3);
+          oscillator.stop(ctx.currentTime + 0.2);
           break;
         case 'transition':
           oscillator.type = 'sine';
-          gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+          gainNode.gain.setValueAtTime(0.2, ctx.currentTime); // Reduced volume
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); // Shorter duration
           oscillator.start();
-          oscillator.stop(ctx.currentTime + 0.5);
+          oscillator.stop(ctx.currentTime + 0.3);
           break;
         case 'break':
-          // Breaking glass sound
+          // Breaking glass sound - simplified
           const glassOsc = ctx.createOscillator();
           const glassGain = ctx.createGain();
           
           glassOsc.connect(glassGain);
           glassGain.connect(ctx.destination);
           
-          glassOsc.frequency.setValueAtTime(1200, ctx.currentTime);
-          glassOsc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.3);
+          glassOsc.frequency.setValueAtTime(800, ctx.currentTime);
+          glassOsc.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.2);
           
           glassOsc.type = 'sine';
-          glassGain.gain.setValueAtTime(0.2, ctx.currentTime);
-          glassGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          glassGain.gain.setValueAtTime(0.1, ctx.currentTime); // Reduced volume
+          glassGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
           
           glassOsc.start();
-          glassOsc.stop(ctx.currentTime + 0.3);
+          glassOsc.stop(ctx.currentTime + 0.2);
           
-          // Add a second oscillator for richer sound
-          const glassOsc2 = ctx.createOscillator();
-          const glassGain2 = ctx.createGain();
-          
-          glassOsc2.connect(glassGain2);
-          glassGain2.connect(ctx.destination);
-          
-          glassOsc2.frequency.setValueAtTime(800, ctx.currentTime);
-          glassOsc2.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.4);
-          
-          glassOsc2.type = 'square';
-          glassGain2.gain.setValueAtTime(0.15, ctx.currentTime);
-          glassGain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-          
-          glassOsc2.start();
-          glassOsc2.stop(ctx.currentTime + 0.4);
-          break;
+          audioNodesRef.current.add(glassOsc);
+          glassOsc.onended = () => audioNodesRef.current.delete(glassOsc);
+          return; // Don't create the default oscillator
       }
       
-      if (type !== 'break') {
-        audioNodesRef.current.add(oscillator);
-        oscillator.onended = () => audioNodesRef.current.delete(oscillator);
-      }
+      audioNodesRef.current.add(oscillator);
+      oscillator.onended = () => audioNodesRef.current.delete(oscillator);
     } catch (error) {
       console.log("Audio error:", error);
     }
@@ -330,15 +420,14 @@ const GameSandbox: FC = () => {
   // Create particle explosion effect
   const createParticleExplosion = (tileId: string, column: number, position: number) => {
     const particles = [];
-    const particleCount = 12;
+    const particleCount = 8; // Reduced from 12 for better performance
     const colors = [
-      '#FF9900', '#FF6600', '#FF3300', '#FFCC00', 
-      '#FF9933', '#FF6633', '#FF9966', '#FFCC33'
+      '#FF9900', '#FF6600', '#FF3300', '#FFCC00'
     ];
     
     for (let i = 0; i < particleCount; i++) {
       const angle = (Math.PI * 2 * i) / particleCount;
-      const speed = 2 + Math.random() * 4;
+      const speed = 1.5 + Math.random() * 3; // Reduced speed
       const vx = Math.cos(angle) * speed;
       const vy = Math.sin(angle) * speed;
       
@@ -346,10 +435,10 @@ const GameSandbox: FC = () => {
         id: i,
         x: 0,
         y: 0,
-        vx: vx + (Math.random() - 0.5) * 2,
-        vy: vy + (Math.random() - 0.5) * 2,
+        vx: vx + (Math.random() - 0.5) * 1.5, // Reduced randomness
+        vy: vy + (Math.random() - 0.5) * 1.5,
         color: colors[Math.floor(Math.random() * colors.length)],
-        size: 4 + Math.random() * 8,
+        size: 3 + Math.random() * 6, // Reduced size
         life: 1.0
       });
     }
@@ -365,7 +454,7 @@ const GameSandbox: FC = () => {
     // Remove particle effect after animation
     setTimeout(() => {
       setParticleEffects(prev => prev.filter(p => p.id !== particleEffect.id));
-    }, 1000);
+    }, 800); // Reduced from 1000ms
   };
 
   // Update particles animation
@@ -384,13 +473,13 @@ const GameSandbox: FC = () => {
             ...p,
             x: p.x + p.vx,
             y: p.y + p.vy,
-            vy: p.vy + 0.1, // Gravity
-            life: p.life - 0.02,
-            size: p.size * 0.98
+            vy: p.vy + 0.08, // Reduced gravity
+            life: p.life - 0.025, // Faster fade
+            size: p.size * 0.96 // Faster shrinking
           })).filter(p => p.life > 0)
         })).filter(effect => effect.particles.length > 0)
       );
-    }, 16);
+    }, 20); // Reduced frequency from 16ms to 20ms
     
     return () => {
       if (particleIntervalRef.current) {
@@ -468,20 +557,20 @@ const GameSandbox: FC = () => {
       case 'Easy':
         announcement = '🎉 Stage 1 Complete!\nGet ready for Stage 2!';
         nextLevel = 'Medium';
-        nextStageTimer = 40;
-        nextSpeed = 1.8;
+        nextStageTimer = 45; // Increased from 40
+        nextSpeed = 1.3; // Reduced from 1.8
         break;
       case 'Medium':
         announcement = '🔥 Stage 2 Complete!\nFinal Stage! Go Hard!';
         nextLevel = 'Hard';
-        nextStageTimer = 30;
-        nextSpeed = 2.5;
+        nextStageTimer = 40; // Increased from 30
+        nextSpeed = 1.6; // Reduced from 2.5
         break;
       case 'Hard':
         announcement = '🏆 All Stages Complete!\nKeep going for high score!';
         nextLevel = 'Hard';
-        nextStageTimer = 30;
-        nextSpeed = 2.5;
+        nextStageTimer = 40; // Increased from 30
+        nextSpeed = 1.6; // Reduced from 2.5
         break;
     }
     
@@ -516,6 +605,12 @@ const GameSandbox: FC = () => {
     return `tile_${tileCounter.current}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   };
 
+  // Check if tiles are close enough to be considered concurrent
+  const areTilesConcurrent = (tile1: any, tile2: any) => {
+    const verticalDistance = Math.abs(tile1.position - tile2.position);
+    return verticalDistance < 20; // Tiles within 20% vertical distance are considered concurrent
+  };
+
   // Generate tiles in batches with staggered release
   const generateTileBatch = (count: number) => {
     const now = Date.now();
@@ -524,7 +619,22 @@ const GameSandbox: FC = () => {
     for (let i = 0; i < count; i++) {
       const order = tileCounter.current + 1;
       const orangeColumn = Math.floor(Math.random() * columns);
-      const baseSpeed = (level === 'Easy' ? 0.8 : level === 'Medium' ? 1.2 : level === 'Hard' ? 1.8 : 1.0) * gameSpeed;
+      
+      // ADJUSTED SPEEDS FOR BETTER USER EXPERIENCE
+      let baseSpeed;
+      switch(level) {
+        case 'Easy':
+          baseSpeed = 0.6 * gameSpeed; // Reduced from 0.8
+          break;
+        case 'Medium':
+          baseSpeed = 0.9 * gameSpeed; // Reduced from 1.2
+          break;
+        case 'Hard':
+          baseSpeed = 1.2 * gameSpeed; // Reduced from 1.8
+          break;
+        default:
+          baseSpeed = 0.6 * gameSpeed;
+      }
       
       const newTile = {
         id: generateId(),
@@ -537,8 +647,8 @@ const GameSandbox: FC = () => {
         released: false,
       };
       
-      // Calculate release time (staggered)
-      const releaseTime = now + (i * 500); // 500ms between releases
+      // Calculate release time (staggered with more spacing)
+      const releaseTime = now + (i * 800); // Increased from 500ms to 800ms for more spacing
       
       tileOrderMapRef.current.set(order, newTile.id);
       tileReleaseQueueRef.current.push({
@@ -571,8 +681,8 @@ const GameSandbox: FC = () => {
   // Generate initial batch when game starts
   useEffect(() => {
     if (gameActive && gameStarted && tiles.length === 0 && tileReleaseQueueRef.current.length === 0) {
-      // Generate 3 tiles immediately but release them staggered
-      generateTileBatch(3);
+      // Generate 2 tiles initially (reduced from 3)
+      generateTileBatch(2);
     }
   }, [gameActive, gameStarted, tiles.length, level, gameSpeed]);
 
@@ -587,9 +697,9 @@ const GameSandbox: FC = () => {
     // Generate new batch when queue is running low
     tileIntervalRef.current = setInterval(() => {
       if (tileReleaseQueueRef.current.length < 2) {
-        generateTileBatch(3);
+        generateTileBatch(2); // Reduced from 3
       }
-    }, 2000);
+    }, 2500); // Increased from 2000ms
 
     return () => {
       if (tileIntervalRef.current) {
@@ -598,7 +708,7 @@ const GameSandbox: FC = () => {
     };
   }, [gameActive, gameStarted, level, columns, levelStage]);
 
-  // Game loop for moving tiles
+  // Game loop for moving tiles - UPDATED TO CHECK FOR CONCURRENT TILES
   useEffect(() => {
     if (!gameActive || !gameStarted || levelStage === 'announcement' || levelStage === 'transition') return;
 
@@ -612,6 +722,14 @@ const GameSandbox: FC = () => {
           ...tile,
           position: tile.released && !tile.disintegrating ? tile.position + tile.speed : tile.position,
         }));
+        
+        // Update positions ref for concurrent tile checking
+        tilePositionsRef.current.clear();
+        updatedTiles.forEach(tile => {
+          if (tile.released && !tile.disintegrating) {
+            tilePositionsRef.current.set(tile.id, tile.position);
+          }
+        });
         
         // Find current tile ID from the order map
         const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
@@ -633,7 +751,7 @@ const GameSandbox: FC = () => {
       });
 
       setGameTime(prev => prev + 1);
-    }, 16);
+    }, 20); // Increased from 16ms to 20ms for slightly slower updates
 
     return () => {
       if (gameIntervalRef.current) {
@@ -656,7 +774,7 @@ const GameSandbox: FC = () => {
       
       // Very small delay for ultra-smooth flow
       if (tapProcessingQueue.current.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 5));
+        await new Promise(resolve => setTimeout(resolve, 10)); // Increased from 5ms
       }
     }
     
@@ -668,7 +786,7 @@ const GameSandbox: FC = () => {
     const now = Date.now();
     
     // Minimal debounce for smooth flow
-    if (now - lastTapRef.current < 20) { // Reduced to 20ms for ultra-smooth flow
+    if (now - lastTapRef.current < 30) {
       return;
     }
     
@@ -688,7 +806,22 @@ const GameSandbox: FC = () => {
     setTimeout(() => setActiveTapColumn(null), 100);
   };
 
-  // Process individual tap - optimized for flow
+  // Check if a tile should be considered "concurrent" with the current tile
+  const isConcurrentTile = (tile: any, currentTile: any) => {
+    if (!tile || !currentTile) return false;
+    
+    // Check if tiles are in the same horizontal line (within 20% vertical distance)
+    const verticalDistance = Math.abs(tile.position - currentTile.position);
+    const isCloseVertically = verticalDistance < 20;
+    
+    // Check if tiles are close in order (next few tiles)
+    const orderDifference = tile.order - currentTile.order;
+    const isCloseInOrder = orderDifference > 0 && orderDifference <= 3;
+    
+    return isCloseVertically && isCloseInOrder;
+  };
+
+  // Process individual tap - UPDATED TO ALLOW CONCURRENT TILE TAPPING
   const processColumnTap = async (columnIndex: number) => {
     // Get current tile ID from the order map
     const currentTileId = tileOrderMapRef.current.get(currentTileOrder);
@@ -704,92 +837,119 @@ const GameSandbox: FC = () => {
       return;
     }
 
-    // Check if tapped column has the current tile
-    if (currentTile.column === columnIndex) {
-      const positionScore = Math.max(20, Math.round(100 - currentTile.position * 0.6));
-      const basePoints = positionScore;
-      let points = 0;
-      let feedback: 'perfect' | 'good' = 'good';
-      let feedbackText = 'GOOD!';
+    // Check if tapped column has the current tile OR a concurrent tile
+    let tappedTile = currentTile;
+    let isConcurrentTap = false;
+    
+    if (currentTile.column !== columnIndex) {
+      // Check if there's a concurrent tile in the tapped column
+      const releasedTiles = tiles.filter(t => t.released && !t.disintegrating);
+      const tileInColumn = releasedTiles.find(t => t.column === columnIndex);
       
-      if (currentTile.position < 50) {
-        points = basePoints * multiplier * 2.0;
-        feedback = 'perfect';
-        feedbackText = 'PERFECT!';
-        playTileSound(1000 + Math.random() * 300, 'perfect');
-        playTileSound(800, 'break'); // Additional break sound for perfect
-        setStreak(prev => {
-          const newStreak = prev + 1;
-          if (newStreak % 3 === 0) {
-            setMultiplier(prevMult => Math.min(prevMult + 0.5, 4));
-          }
-          return newStreak;
-        });
-      } else if (currentTile.position < 80) {
-        points = basePoints * multiplier;
-        feedback = 'good';
-        feedbackText = 'GREAT!';
-        playTileSound(700 + Math.random() * 200, 'hit');
-        playTileSound(600, 'break'); // Break sound for great
-        setStreak(prev => prev + 1);
+      if (tileInColumn && isConcurrentTile(tileInColumn, currentTile)) {
+        tappedTile = tileInColumn;
+        isConcurrentTap = true;
       } else {
-        points = basePoints * multiplier * 0.8;
-        feedback = 'good';
-        feedbackText = 'GOOD!';
-        playTileSound(500 + Math.random() * 150, 'hit');
-        playTileSound(400, 'break'); // Break sound for good
-        setStreak(prev => Math.max(1, prev + 0.5));
+        // Tapped wrong column and no concurrent tile - game over
+        playTileSound(100, 'miss');
+        handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1));
+        return;
       }
+    }
 
-      const levelBonus = level === 'Medium' ? 1.5 : level === 'Hard' ? 2.0 : 1;
-      points = Math.round(points * levelBonus);
+    // Calculate score based on tapped tile
+    const positionScore = Math.max(20, Math.round(100 - tappedTile.position * 0.6));
+    const basePoints = positionScore;
+    let points = 0;
+    let feedback: 'perfect' | 'good' = 'good';
+    let feedbackText = 'GOOD!';
+    
+    if (tappedTile.position < 50) {
+      points = basePoints * multiplier * (isConcurrentTap ? 1.5 : 2.0); // Reduced bonus for concurrent taps
+      feedback = 'perfect';
+      feedbackText = isConcurrentTap ? 'CONCURRENT!' : 'PERFECT!';
+      playTileSound(1000 + Math.random() * 300, 'perfect');
+      playTileSound(800, 'break');
+      setStreak(prev => {
+        const newStreak = prev + 1;
+        if (newStreak % 3 === 0) {
+          setMultiplier(prevMult => Math.min(prevMult + 0.5, 4));
+        }
+        return newStreak;
+      });
+    } else if (tappedTile.position < 80) {
+      points = basePoints * multiplier * (isConcurrentTap ? 1.2 : 1.0);
+      feedback = 'good';
+      feedbackText = isConcurrentTap ? 'SIMULTANEOUS!' : 'GREAT!';
+      playTileSound(700 + Math.random() * 200, 'hit');
+      playTileSound(600, 'break');
+      setStreak(prev => prev + 1);
+    } else {
+      points = basePoints * multiplier * (isConcurrentTap ? 1.0 : 0.8);
+      feedback = 'good';
+      feedbackText = isConcurrentTap ? 'TOGETHER!' : 'GOOD!';
+      playTileSound(500 + Math.random() * 150, 'hit');
+      playTileSound(400, 'break');
+      setStreak(prev => Math.max(1, prev + 0.5));
+    }
 
-      setScore(prev => prev + Math.round(points));
-      setCombo(prev => prev + 1);
-      
-      // Create particle explosion effect
-      createParticleExplosion(currentTileId, currentTile.column, currentTile.position);
-      
-      // Play breaking sound
-      playTileSound(300, 'break');
-      
-      // MARK TILE FOR DISINTEGRATION
-      setTiles(prev => prev.map(tile => 
-        tile.id === currentTileId ? { ...tile, disintegrating: true } : tile
-      ));
-      
-      // IMMEDIATELY move to next tile for continuous flow
-      const nextOrder = currentTileOrder + 1;
+    const levelBonus = level === 'Medium' ? 1.5 : level === 'Hard' ? 2.0 : 1;
+    points = Math.round(points * levelBonus);
+
+    setScore(prev => prev + Math.round(points));
+    setCombo(prev => prev + 1);
+    
+    // Create particle explosion effect
+    createParticleExplosion(tappedTile.id, tappedTile.column, tappedTile.position);
+    
+    // MARK TAPPED TILE FOR DISINTEGRATION
+    setTiles(prev => prev.map(tile => 
+      tile.id === tappedTile.id ? { ...tile, disintegrating: true } : tile
+    ));
+    
+    // Update current tile order
+    let nextOrder = currentTileOrder;
+    
+    if (!isConcurrentTap) {
+      // Normal tap - move to next order
+      nextOrder = currentTileOrder + 1;
       setCurrentTileOrder(nextOrder);
       
-      setShowFeedback({type: feedback, show: true, text: feedbackText});
-      setLastTapTime(Date.now());
-      
-      setTimeout(() => {
-        setShowFeedback(prev => ({...prev, show: false}));
-      }, 200);
-
-      // Clear from order map immediately for smooth flow
+      // Clear from order map
       tileOrderMapRef.current.delete(currentTileOrder);
-      
-      // If no more released tiles available, generate more immediately
-      const nextTileId = tileOrderMapRef.current.get(nextOrder);
-      if (!nextTileId) {
-        setTimeout(() => {
-          generateTileBatch(1);
-        }, 0);
-      }
-      
-      // Remove tile after disintegration animation
-      setTimeout(() => {
-        setTiles(prev => prev.filter(tile => tile.id !== currentTileId));
-      }, 300);
-      
     } else {
-      // Tapped wrong column - game over
-      playTileSound(100, 'miss');
-      handleGameOver('Wrong column! Should have tapped column ' + (currentTile.column + 1));
+      // Concurrent tap - find the next tile order (skip the concurrent tile's order)
+      // We need to ensure we don't skip too many orders
+      const tappedTileOrder = tappedTile.order;
+      tileOrderMapRef.current.delete(tappedTileOrder);
+      
+      // If the concurrent tile was ahead of current tile, we need to adjust
+      if (tappedTileOrder > currentTileOrder) {
+        nextOrder = currentTileOrder + 1;
+        setCurrentTileOrder(nextOrder);
+        tileOrderMapRef.current.delete(currentTileOrder);
+      }
     }
+    
+    setShowFeedback({type: feedback, show: true, text: feedbackText});
+    setLastTapTime(Date.now());
+    
+    setTimeout(() => {
+      setShowFeedback(prev => ({...prev, show: false}));
+    }, 200);
+
+    // If no more released tiles available, generate more immediately
+    const nextTileId = tileOrderMapRef.current.get(nextOrder);
+    if (!nextTileId) {
+      setTimeout(() => {
+        generateTileBatch(1);
+      }, 0);
+    }
+    
+    // Remove tile after disintegration animation
+    setTimeout(() => {
+      setTiles(prev => prev.filter(tile => tile.id !== tappedTile.id));
+    }, 300);
   };
 
   const handleGameOver = (reason: string) => {
@@ -832,7 +992,13 @@ const GameSandbox: FC = () => {
   };
 
   const startGame = () => {
-    startBackgroundMusic();
+    // Reset all audio
+    cleanupAudio();
+    
+    // Start music after a small delay to ensure clean audio context
+    setTimeout(() => {
+      startBackgroundMusic();
+    }, 100);
     
     playTileSound(1500, 'perfect');
     
@@ -860,10 +1026,16 @@ const GameSandbox: FC = () => {
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     setShowMenu(false);
+    setAudioError(false);
   };
 
   const restartGame = () => {
-    startBackgroundMusic();
+    // Reset all audio
+    cleanupAudio();
+    
+    setTimeout(() => {
+      startBackgroundMusic();
+    }, 100);
     
     playTileSound(1200, 'hit');
     
@@ -891,6 +1063,7 @@ const GameSandbox: FC = () => {
     setShowFeedback({type: 'good', show: false, text: ''});
     setShowAnnouncement(false);
     setShowMenu(false);
+    setAudioError(false);
     
     if (announcementTimeoutRef.current) {
       clearTimeout(announcementTimeoutRef.current);
@@ -917,6 +1090,7 @@ const GameSandbox: FC = () => {
     setShowMenu(true);
     setMenuState('main');
     cleanupAudio();
+    setAudioError(false);
     
     if (gameIntervalRef.current) clearInterval(gameIntervalRef.current);
     if (tileIntervalRef.current) clearInterval(tileIntervalRef.current);
@@ -1041,6 +1215,21 @@ const GameSandbox: FC = () => {
         }
       `}</style>
       
+      {/* Hidden audio element for background music */}
+      {audioLoaded && !audioError && (
+        <audio
+          ref={el => {
+            if (el && !backgroundMusicRef.current) {
+              backgroundMusicRef.current = el;
+            }
+          }}
+          src="https://assets.mixkit.co/music/preview/mixkit-driving-ambition-32.mp3"
+          loop
+          preload="auto"
+          style={{ display: 'none' }}
+        />
+      )}
+      
       <div 
         ref={gameContainerRef}
         className="relative w-[270px] h-[480px] bg-gradient-to-b from-gray-900 via-black to-gray-900 rounded-2xl border border-orange-500/20 shadow-[0_0_60px_rgba(255,119,0,0.1)] overflow-hidden touch-none select-none mx-auto"
@@ -1074,8 +1263,13 @@ const GameSandbox: FC = () => {
                   
                   <div className="text-xs text-gray-500 mb-2">🏆 High Score: {highScore}</div>
                   <div className="text-[10px] text-gray-600">
-                    Multiple tiles generated • Fast mobile response
+                    Now with concurrent tile tapping!
                   </div>
+                  {audioError && (
+                    <div className="text-[10px] text-yellow-500 mt-2">
+                      Note: Using generated music (external audio blocked)
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -1132,8 +1326,8 @@ const GameSandbox: FC = () => {
                   </div>
                   
                   <div className="text-[10px] text-gray-500">
-                    {score < 200 ? 'Tip: Always have multiple tiles ready to tap!' :
-                     score < 500 ? 'Tip: Tiles are pre-generated for fast response!' :
+                    {score < 200 ? 'Tip: Tiles close together can be tapped together!' :
+                     score < 500 ? 'Tip: Watch for concurrent tiles on the same line!' :
                      'Tip: Perfect timing gives 2x points!'}
                   </div>
                 </>
@@ -1336,6 +1530,14 @@ const GameSandbox: FC = () => {
                     </>
                   )}
                   
+                  {/* Concurrent tile indicator */}
+                  {currentTile && !tile.disintegrating && tile.id !== currentTile.id && 
+                   Math.abs(tile.position - currentTile.position) < 20 && (
+                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[8px] text-green-300 font-bold whitespace-nowrap bg-black/70 px-1 rounded animate-pulse">
+                      CONCURRENT
+                    </div>
+                  )}
+                  
                   {/* Tap indicator only for current tile */}
                   {currentTile?.id === tile.id && !tile.disintegrating && tile.position < 60 && (
                     <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[9px] text-yellow-300 font-bold whitespace-nowrap bg-black/70 px-1 rounded animate-pulse">
@@ -1405,12 +1607,13 @@ const GameSandbox: FC = () => {
               </div>
             </div>
 
-            {/* Music indicator */}
+            {/* Music indicator with volume info */}
             <div className="absolute top-16 right-2 bg-black/30 rounded-full p-1 z-10">
               <div className="text-[9px] text-gray-400">
                 <span className={musicPlaying ? 'text-green-400' : 'text-red-400'}>
-                  {musicPlaying ? '🎵' : '🔈'}
+                  {musicPlaying ? '🔊' : '🔈'}
                 </span>
+                <div className="text-[6px] text-gray-500">VOL: 70%</div>
               </div>
             </div>
 
@@ -1421,23 +1624,12 @@ const GameSandbox: FC = () => {
               </div>
             )}
 
-            {/* Flow indicator */}
-            {tapProcessingQueue.current.length > 0 && (
-              <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 text-center z-10">
-                <div className="text-[10px] text-green-400 bg-black/30 px-2 py-1 rounded-full">
-                  FLOW: {tapProcessingQueue.current.length}
-                </div>
+            {/* Concurrent tiles info */}
+            <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 text-center z-10">
+              <div className="text-[10px] text-green-400 bg-black/30 px-2 py-1 rounded-full">
+                CONCURRENT TILES ENABLED
               </div>
-            )}
-
-            {/* Particle count indicator */}
-            {particleEffects.length > 0 && (
-              <div className="absolute bottom-40 left-1/2 transform -translate-x-1/2 text-center z-10">
-                <div className="text-[10px] text-orange-400 bg-black/30 px-2 py-1 rounded-full">
-                  PARTICLES: {particleEffects.reduce((sum, effect) => sum + effect.particles.length, 0)}
-                </div>
-              </div>
-            )}
+            </div>
           </>
         )}
       </div>
