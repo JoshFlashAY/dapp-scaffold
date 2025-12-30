@@ -144,6 +144,49 @@ const GameSandbox: FC = () => {
   const lastProcessedTapRef = useRef<number>(0);
   const touchMoveThresholdRef = useRef<number>(10); // pixels
 
+  // Share to X function
+  const shareToX = () => {
+    try {
+      // Create the tweet text with game stats
+      const tweetText = `🎮 I scored ${score} points and reached ${level} in Beat Rush! Can you beat my score? #BeatRush #RhythmGame`;
+      
+      // Create the share URL
+      const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+      
+      // Open Twitter share in a new window
+      window.open(shareUrl, '_blank', 'width=550,height=420');
+      
+      // Play a sound for feedback
+      playTileSound(800, 'hit');
+      
+      // Optional: Add a small visual feedback
+      setShowFeedback({
+        type: 'good',
+        show: true,
+        text: 'Sharing to X...'
+      });
+      
+      setTimeout(() => {
+        setShowFeedback(prev => ({...prev, show: false}));
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Error sharing to X:', error);
+      // Fallback: Copy to clipboard
+      const tweetText = `🎮 I scored ${score} points and reached ${level} in Beat Rush! Can you beat my score?`;
+      navigator.clipboard.writeText(tweetText).then(() => {
+        setShowFeedback({
+          type: 'perfect',
+          show: true,
+          text: 'Copied to clipboard!'
+        });
+        setTimeout(() => {
+          setShowFeedback(prev => ({...prev, show: false}));
+        }, 1000);
+      });
+    }
+  };
+
   // Initialize audio context
   const initAudio = () => {
     if (!audioContextRef.current) {
@@ -1191,6 +1234,22 @@ const GameSandbox: FC = () => {
                       🏠 MAIN MENU
                     </button>
                   </div>
+
+                  {/* Share to X Button - ADDED FEATURE */}
+                  <button
+                    onClick={shareToX}
+                    onTouchStart={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      shareToX();
+                    }}
+                    className="w-full bg-gradient-to-r from-blue-400 to-blue-500 text-white font-bold py-3 px-3 rounded-xl shadow-lg text-sm hover:brightness-110 transition-all mb-5 flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                    </svg>
+                    SHARE SCORE ON X
+                  </button>
                   
                   <div className="text-xs text-gray-400">
                     {score < 200 ? 'Keep going! Perfect taps give bonus points!' :
@@ -1462,6 +1521,4 @@ const GameSandbox: FC = () => {
       </div>
     </div>
   );
-};
-
-export default GameSandbox;
+}
